@@ -1,0 +1,8 @@
+node_modules/
+.superpowers/
+supabase/.temp/
+supabase/.branches/
+test-results/
+playwright-report/
+.env
+.env.*
