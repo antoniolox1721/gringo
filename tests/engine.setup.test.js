@@ -39,12 +39,12 @@ test('start with 1 player throws', () => {
   assert.throws(() => startGame(createGame('p1', 'A'), 'p1'), /2 players/);
 });
 
-test('deal gives 4 cards each and a discard card', () => {
+test('deal gives 4 cards each and leaves the discard pile empty', () => {
   const s = startGame(lobby(3), 'p1', seededRng());
   assert.equal(s.phase, 'setup');
   for (const p of s.players) assert.equal(p.hand.length, 4);
-  assert.equal(s.discard.length, 1);
-  assert.equal(s.deck.length, 54 - 12 - 1);
+  assert.equal(s.discard.length, 0);
+  assert.equal(s.deck.length, 54 - 12);
   const uids = [...s.deck, ...s.discard, ...s.players.flatMap((p) => p.hand)].map((x) => x.uid);
   assert.equal(new Set(uids).size, 54);
 });
@@ -114,4 +114,13 @@ test('viewFor hides deck contents', () => {
   for (const card of s.deck) assert.ok(!text.includes(`"uid":${card.uid},`) && !text.includes(`"uid":${card.uid}}`));
   assert.equal(viewFor(s, 'p1').deckCount, s.deck.length);
   assert.equal(viewFor(s, 'p1').deck, undefined);
+});
+
+test('game starts with an empty discard pile', () => {
+  const s = startGame(lobby(2), 'p1', seededRng());
+  assert.deepEqual(s.discard, []);
+  assert.equal(s.discardClaimed, false);
+  const v = viewFor(s, 'p1');
+  assert.equal(v.discardTop, null);
+  assert.equal(v.discardCount, 0);
 });

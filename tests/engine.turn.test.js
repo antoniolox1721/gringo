@@ -166,3 +166,14 @@ test('draw with deck empty and pile of two takes the buried card and keeps the t
   assert.deepEqual(state.discard.map((x) => x.uid), [top.uid]);
   assert.equal(state.deck.length, 0);
 });
+
+test('draw with empty deck and empty pile throws no cards', () => {
+  const g = game({ deck: [], discard: [] });
+  assert.throws(() => draw(g, 'a'), /no cards/);
+});
+
+test('draw with empty deck and single-card pile throws no cards and keeps the card', () => {
+  const g = game({ deck: [], discard: [c('2', 'D')] });
+  assert.throws(() => draw(g, 'a'), /no cards/);
+  assert.equal(g.discard.length, 1);
+});

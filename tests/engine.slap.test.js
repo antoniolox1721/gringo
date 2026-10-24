@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  slap, usePower, draw, viewFor,
+  slap, usePower, draw, discardDrawn, viewFor,
 } from '../supabase/functions/_shared/engine.js';
 import { c, stackedGame } from './helpers.js';
 
@@ -197,4 +197,25 @@ test('revealed slots are invalidated when a slap moves a card', () => {
   const { state } = slap(g, 'a', { ownerId: 'b', slot: 1, giveSlot: 2 });
   assert.deepEqual(state.players[2].viewable, []);
   assert.equal(viewFor(state, 'c').players[1].hand[1].card, undefined);
+});
+
+test('slap on empty pile gives penalty and does not crash', () => {
+  const g = slapGame({ discard: [] });
+  const { state, ok } = slap(g, 'a', { ownerId: 'a', slot: 0 });
+  assert.equal(ok, false);
+  assert.equal(state.players[0].hand.length, 5);
+  assert.equal(state.discard.length, 0);
+  assert.equal(viewFor(state, 'a').discardTop, null);
+});
+
+test('first discard becomes the top and can be matched', () => {
+  const g = slapGame({ discard: [], turn: 0 });
+  const s1 = discardDrawn(draw(g, 'a').state, 'a');
+  assert.equal(s1.discard.length, 1);
+  const rank = s1.discard[0].rank;
+  const s2 = structuredClone(s1);
+  s2.players[2].hand[0] = c(rank, 'C');
+  const r = slap(s2, 'c', { ownerId: 'c', slot: 0 });
+  assert.equal(r.ok, true);
+  assert.equal(r.state.discard.length, 2);
 });
