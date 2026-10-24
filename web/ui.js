@@ -16,6 +16,8 @@ let lastKey = '';
 let homeError = '';
 let toastTimer = null;
 let local = freshLocal();
+let lastEvent = '';
+let fx = new Set();
 
 function freshLocal() {
   return { armed: false, giving: null, peekSel: [], jMine: null, kingSwap: false, kickArm: null };
@@ -44,14 +46,30 @@ function clearSession() {
 // ---- helpers ---------------------------------------------------------------
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+const SUIT_NAME = { S: 'spades', H: 'hearts', D: 'diamonds', C: 'clubs' };
+const RANK_NAME = { A: 'Ace', J: 'Jack', Q: 'Queen', K: 'King' };
+
 function cardLabel(card) {
   if (card.rank === 'JOKER') return 'Joker';
   return `${card.rank}${SUIT[card.suit] || ''}`;
 }
-function cardHtml(card, extra = '') {
-  const red = card.suit === 'H' || card.suit === 'D';
-  return `<span class="card face${red ? ' red' : ''} ${extra}">${esc(cardLabel(card))}</span>`;
+function cardSpoken(card) {
+  if (card.rank === 'JOKER') return 'Joker, worth 0';
+  const low = card.rank === 'K' && (card.suit === 'H' || card.suit === 'D');
+  return `${RANK_NAME[card.rank] || card.rank} of ${SUIT_NAME[card.suit]}${low ? ', worth minus 3' : ''}`;
 }
+// Rank and suit glyph in the corner, big suit glyph in the middle. Red kings carry a -3 tag, the joker a 0.
+function cardHtml(card, extra = '') {
+  const joker = card.rank === 'JOKER';
+  const red = card.suit === 'H' || card.suit === 'D';
+  const low = card.rank === 'K' && red;
+  const glyph = joker ? '\u2605' : SUIT[card.suit];
+  const tag = low ? '<u class="val">\u22123</u>' : joker ? '<u class="val">0</u>' : '';
+  const stamp = extra.includes('claimed') ? '<span class="stamp">Claimed</span>' : '';
+  return `<span class="card face${red ? ' red' : ''}${low ? ' king-low' : ''} ${extra}" role="img" aria-label="${esc(cardSpoken(card))}">` +
+    `<b class="r">${joker ? 'Jk' : esc(card.rank)}</b>${joker ? '' : `<i class="s">${glyph}</i>`}<i class="pip${joker ? ' joker' : ''}">${glyph}</i>${tag}${stamp}</span>`;
+}
+const whoName = (id) => (view && id === view.you ? 'You' : nameOf(id));
 
 function toast(msg, kind = '') {
   $toast.textContent = msg;
@@ -84,8 +102,58 @@ async function refresh() {
 function applyView(v) {
   if (!v) return;
   if (view && v.version < view.version) return; // stale response
+  const prev = view;
   view = v;
+  if (prev && v.version > prev.version) {
+    fx = changedKeys(prev, v);
+    const text = describeChange(prev, v);
+    if (text) {
+      lastEvent = text;
+      if (!busy) toast(text);
+    }
+  }
   render();
+}
+
+// Which slots and piles visibly changed, so only those animate.
+const slotKey = (e) => (e.empty ? 'e' : e.card ? `c${e.card.uid ?? e.card.rank + e.card.suit}` : 'b');
+function changedKeys(p, v) {
+  const out = new Set();
+  const top = (x) => (x.discardTop ? `${x.discardTop.uid ?? x.discardTop.rank + x.discardTop.suit}:${x.discardCount}` : '');
+  if (top(p) !== top(v)) out.add('discard');
+  if (!p.drawn && v.drawn) out.add('drawn');
+  for (const np of v.players) {
+    const op = p.players.find((x) => x.id === np.id);
+    if (!op) continue;
+    np.hand.forEach((e, i) => { if (!op.hand[i] || slotKey(op.hand[i]) !== slotKey(e)) out.add(`${np.id}:${i}`); });
+  }
+  return out;
+}
+
+const POWER_TEXT = { J: 'the Jack power (blind swap)', Q: 'the Queen power (peek at a card)', K: 'the King power (look at an opponent card)' };
+function describeChange(p, v) {
+  if (!['turns', 'final'].includes(v.phase)) return '';
+  const parts = [];
+  const filled = (x) => x.hand.filter((s) => !s.empty).length;
+  for (const np of v.players) {
+    const op = p.players.find((x) => x.id === np.id);
+    if (!op) continue;
+    if (np.gringo && !op.gringo) parts.push(`${whoName(np.id)} called Gringo.`);
+    if (np.hand.length > op.hand.length) parts.push(`${whoName(np.id)} missed a slap and took a penalty card.`);
+  }
+  if (!parts.length && v.discardCount > p.discardCount && v.discardClaimed && v.discardTop) {
+    const slapper = v.players.find((np) => { const op = p.players.find((x) => x.id === np.id); return op && filled(np) < filled(op); });
+    parts.push(`${slapper ? whoName(slapper.id) : 'Someone'} slapped ${cardLabel(v.discardTop)}.`);
+  } else if (!parts.length && v.discardCount > p.discardCount && v.discardTop) {
+    parts.push(`${whoName(p.turnId)} discarded ${cardLabel(v.discardTop)}.`);
+  } else if (!parts.length && v.hasDrawn && !p.hasDrawn) {
+    parts.push(`${whoName(v.turnId)} drew a card.`);
+  }
+  const np = v.pending[0];
+  if (np && !(p.pending[0] && p.pending[0].type === np.type && p.pending[0].by === np.by)) {
+    parts.push(`${whoName(np.by)} used ${POWER_TEXT[np.type] || 'a power'}.`);
+  }
+  return parts.slice(0, 2).join(' ');
 }
 
 async function act(action, args = {}) {
@@ -110,6 +178,7 @@ function startSession(s) {
   view = null;
   local = freshLocal();
   lastKey = '';
+  lastEvent = '';
   if (unsub) unsub();
   unsub = subscribe(s.code, refresh);
   clearInterval(pollTimer);
@@ -134,12 +203,26 @@ function render() {
   const key = JSON.stringify([session && session.code, view, local, busy, homeError]);
   if (key === lastKey) return;
   lastKey = key;
-  if (!session) { renderHome(); return; }
+  if (!session) { document.title = 'Gringo'; $app.removeAttribute('data-phase'); renderHome(); return; }
   if (!view) { $app.innerHTML = '<p class="muted">Connecting...</p>'; return; }
   const body = {
     lobby: renderLobby, setup: renderSetup, turns: renderBoard, final: renderBoard, rps: renderRps, done: renderDone,
   }[view.phase] || renderBoard;
+  const focusSel = focusSelector();
+  $app.dataset.phase = view.phase;
   $app.innerHTML = header() + body();
+  fx = new Set();
+  document.title = inPlay() && view.turnId === view.you ? 'Your turn - Gringo' : 'Gringo';
+  if (focusSel) { const el = $app.querySelector(focusSel); if (el && !el.disabled) el.focus({ preventScroll: true }); }
+}
+
+// Keep keyboard focus on the same control when the view redraws.
+function focusSelector() {
+  const a = document.activeElement;
+  if (!a || !$app.contains(a)) return '';
+  if (a.dataset.owner !== undefined) return `.slot[data-owner="${CSS.escape(a.dataset.owner)}"][data-slot="${a.dataset.slot}"]`;
+  if (a.dataset.act) return `[data-act="${a.dataset.act}"]${a.dataset.id ? `[data-id="${CSS.escape(a.dataset.id)}"]` : ''}${a.dataset.pick ? `[data-pick="${a.dataset.pick}"]` : ''}`;
+  return '';
 }
 
 function header() {
@@ -155,6 +238,10 @@ function renderHome() {
   }
   $app.innerHTML = `
     <header class="top"><h1>Gringo</h1></header>
+    <div class="fan" aria-hidden="true">
+      ${cardHtml({ rank: 'K', suit: 'H' })}${cardHtml({ rank: '7', suit: 'S' })}${cardHtml({ rank: 'A', suit: 'D' })}
+    </div>
+    <p class="muted" style="text-align:center">A memory card game for 2 to 4 players. Lowest hand wins.</p>
     <section id="home" class="panel">
       <label>Your name<input id="name" maxlength="16" autocomplete="off" placeholder="Name"></label>
       <button class="primary" data-act="create">Create room</button>
@@ -172,13 +259,13 @@ function renderLobby() {
     ${isHost && p.id !== view.you ? `<button class="small" data-act="kick" data-id="${esc(p.id)}">${local.kickArm === p.id ? 'Sure?' : 'Kick'}</button>` : ''}</li>`).join('');
   const canStart = isHost && view.players.length >= 2;
   return `<section class="panel">
-    <p>Share this code with friends:</p>
+    <p>Share this code with your friends:</p>
     <div class="bigcode" id="roomcode">${esc(session.code)}</div>
     <h2>Players (${view.players.length}/4)</h2>
     <ul class="plist">${rows}</ul>
     ${isHost
-      ? `<button class="primary" data-act="start" ${canStart ? '' : 'disabled'}>Start game</button>${canStart ? '' : '<p class="muted">Need at least 2 players.</p>'}`
-      : '<p class="muted">Waiting for the host to start...</p>'}
+      ? `<button class="primary" data-act="start" ${canStart ? '' : 'disabled'}>Start game</button>${canStart ? '' : '<p class="muted">Start unlocks when a second player joins.</p>'}`
+      : '<p class="muted">Waiting for the host to start the game.</p>'}
     <button class="link" data-act="leave">Leave room</button>
   </section>`;
 }
@@ -193,9 +280,20 @@ function handHtml(p, mode) {
     if (s.empty) inner = '<span class="card gap" aria-label="empty slot"></span>';
     else if (s.card) inner = cardHtml(s.card, 'peek');
     else inner = '<span class="card back" aria-label="hidden card"></span>';
-    return `<button class="slot${tap ? ' tap' : ''}${sel}" ${attrs} ${tap ? '' : 'tabindex="-1"'} ${s.empty ? 'aria-label="empty slot"' : ''}>${inner}<i>${s.slot + 1}</i></button>`;
+    const known = s.card && !s.empty && view.phase !== 'done' && view.phase !== 'rps' ? ' seen' : '';
+    const fxc = fx.has(`${p.id}:${s.slot}`) ? (s.card ? ' fx-flip' : ' fx-swap') : '';
+    const name = s.empty ? 'empty slot' : s.card ? cardSpoken(s.card) : 'hidden card';
+    return `<button class="slot${tap ? ' tap' : ''}${sel}${fxc}" ${attrs} ${tap ? '' : 'tabindex="-1"'} aria-label="${esc(`${mine ? 'Your' : `${p.name}'s`} slot ${s.slot + 1}: ${name}`)}">${inner}<i>${s.slot + 1}${known}</i></button>`;
   }).join('');
   return `<div class="hand">${slots}</div>`;
+}
+
+// One line telling the player which of this hand's cards they can see right now.
+function seenNote(p) {
+  const n = p.hand.filter((s) => s.card && !s.empty).length;
+  const total = p.hand.filter((s) => !s.empty).length;
+  if (!n) return p.id === view.you ? '<p class="seen-note">You cannot see any of your cards. Remember what you peeked.</p>' : '';
+  return `<p class="seen-note">${p.id === view.you ? `You can see ${n} of your ${total} cards.` : `You can see ${n} of ${esc(p.name)}'s ${total} cards.`}</p>`;
 }
 
 function renderSetup() {
@@ -204,7 +302,7 @@ function renderSetup() {
   if (peeked) {
     return `<section class="panel"><h2>Memorise your cards</h2>
       ${handHtml(m, null)}
-      <p class="muted">Waiting for the other players to peek...</p></section>`;
+      <p class="muted" style="margin-top:12px">Waiting for the other players to peek.</p></section>`;
   }
   const mode = {
     can: (mine) => mine,
@@ -212,31 +310,38 @@ function renderSetup() {
   };
   return `<section class="panel"><h2>Peek at 2 of your 4 cards</h2>
     ${handHtml(m, mode)}
-    <p class="muted">Tap two cards, then confirm. You only get to look once.</p>
+    <p class="muted" style="margin:12px 0">Tap two cards, then confirm. You only get to look once.</p>
     <button class="primary" data-act="peek" ${local.peekSel.length === 2 ? '' : 'disabled'}>Peek (${local.peekSel.length}/2)</button>
   </section>`;
 }
 
-// What does tapping a slot mean right now?
+// What does tapping a slot mean right now? `mine` marks the states where the player must act.
 function currentMode() {
   const pend = view.pending[0];
   const myTurn = view.turnId === view.you;
-  if (local.giving) return { id: 'give', hint: 'Pick which of YOUR cards to give them.', can: (mine) => mine };
-  if (local.armed) return { id: 'slap', hint: 'SLAP: tap a card that matches the top of the pile (yours or an opponent\'s).', can: () => true };
+  const top = view.discardTop ? cardLabel(view.discardTop) : 'the pile';
+  if (local.giving) return { id: 'give', mine: true, slap: true, hint: '<b>Slap:</b> Pick which of YOUR cards to give them.', can: (mine) => mine };
+  if (local.armed) {
+    const risk = view.discardClaimed ? ' The pile is claimed, so a slap now costs a penalty card.' : '';
+    return {
+      id: 'slap', mine: true, slap: true, can: () => true,
+      hint: `<b>Slap mode:</b> tap a card that matches ${esc(top)}. Yours is played. If you pick an opponent's, you then give them one of yours. A miss costs a penalty card.${risk}`,
+    };
+  }
   if (pend && pend.by === view.you) {
     if (pend.type === 'J') {
-      if (local.jMine === null) return { id: 'J1', hint: 'Jack: tap one of YOUR cards to swap away.', can: (mine) => mine };
-      return { id: 'J2', hint: 'Jack: now tap the opponent card to swap with (blind).', can: (mine) => !mine, selected: (mine, slot) => mine && slot === local.jMine };
+      if (local.jMine === null) return { id: 'J1', mine: true, hint: '<b>Jack:</b> tap one of YOUR cards to swap away.', can: (mine) => mine };
+      return { id: 'J2', mine: true, hint: '<b>Jack:</b> now tap the opponent card to swap with. You swap blind.', can: (mine) => !mine, selected: (mine, slot) => mine && slot === local.jMine };
     }
-    if (pend.type === 'Q') return { id: 'Q', hint: 'Queen: tap any card to look at it.', can: () => true };
-    if (!pend.revealed) return { id: 'K1', hint: 'King: tap an opponent card to look at it.', can: (mine) => !mine };
-    if (local.kingSwap) return { id: 'K2', hint: 'King: tap YOUR card to swap into that spot.', can: (mine) => mine };
-    return { id: 'K3', hint: 'King: you looked at the card. Swap it or leave it.', can: () => false };
+    if (pend.type === 'Q') return { id: 'Q', mine: true, hint: '<b>Queen:</b> tap any card to look at it.', can: () => true };
+    if (!pend.revealed) return { id: 'K1', mine: true, hint: '<b>King:</b> tap an opponent card to look at it.', can: (mine) => !mine };
+    if (local.kingSwap) return { id: 'K2', mine: true, hint: '<b>King:</b> tap YOUR card to swap into that spot.', can: (mine) => mine };
+    return { id: 'K3', mine: true, hint: '<b>King:</b> you looked at the card. Swap it or leave it.', can: () => false };
   }
-  if (pend) return { id: 'wait', hint: `${esc(nameOf(pend.by))} is using a ${pend.type} power...`, can: () => false };
-  if (myTurn && view.hasDrawn) return { id: 'keep', hint: 'Tap one of your cards to swap the drawn card into, or discard it.', can: (mine) => mine };
-  if (myTurn) return { id: 'idle', hint: 'Your turn: draw a card, or call Gringo.', can: () => false };
-  return { id: 'other', hint: `${esc(nameOf(view.turnId))}'s turn.`, can: () => false };
+  if (pend) return { id: 'wait', hint: `${esc(nameOf(pend.by))} is using a ${esc(pend.type)} power.`, can: () => false };
+  if (myTurn && view.hasDrawn) return { id: 'keep', mine: true, hint: '<b>Your turn:</b> tap one of your cards to swap the drawn card into it, or discard it.', can: (mine) => mine };
+  if (myTurn) return { id: 'idle', mine: true, hint: '<b>Your turn:</b> draw a card, or call Gringo.', can: () => false };
+  return { id: 'other', hint: `<b>${esc(nameOf(view.turnId))}'s turn.</b> You can still slap a match onto the pile.`, can: () => false };
 }
 
 function renderBoard() {
@@ -256,26 +361,27 @@ function renderBoard() {
   }
 
   const seat = (p) => {
+    const isMe = p.id === view.you;
     const tags = [
       p.id === view.turnId ? '<span class="badge turn">turn</span>' : '',
       p.gringo ? '<span class="badge warn">gringo</span>' : '',
       p.connected ? '' : '<span class="badge off">offline</span>',
     ].join('');
-    const kick = isHost && p.id !== view.you
+    const kick = isHost && !isMe
       ? `<button class="small" data-act="kick" data-id="${esc(p.id)}">${local.kickArm === p.id ? 'Sure?' : 'Kick'}</button>` : '';
-    return `<section class="seat${p.id === view.turnId ? ' active' : ''}" data-player="${esc(p.id)}">
-      <div class="seathead"><b>${esc(p.name)}${p.id === view.you ? ' (you)' : ''}</b> ${tags}${kick}</div>
-      ${handHtml(p, mode)}</section>`;
+    return `<section class="seat${isMe ? ' me' : ''}${p.id === view.turnId ? ' active' : ''}" data-player="${esc(p.id)}">
+      <div class="seathead"><b>${esc(p.name)}${isMe ? ' (you)' : ''}</b> ${tags}${kick}</div>
+      ${handHtml(p, mode)}${isMe || p.hand.some((s) => s.card) ? seenNote(p) : ''}</section>`;
   };
 
   const top = view.discardTop
     ? cardHtml(view.discardTop, view.discardClaimed ? 'claimed' : '')
     : '<span class="card gap"></span>';
   const table = `<section class="table">
-    <div class="pile"><span class="card back"></span><small>Deck ${view.deckCount}</small></div>
-    <div class="pile" id="discard">${top}<small>Discard ${view.discardCount}</small>
-      ${view.discardTop ? (view.discardClaimed ? '<small class="claimed-hint" id="claimed">claimed - slaps now are penalised</small>' : '<small class="open-hint">open to slap</small>') : ''}</div>
-    ${myTurn && view.drawn ? `<div class="pile" id="drawn">${cardHtml(view.drawn, 'drawn')}<small>You drew</small></div>` : ''}
+    <div class="pile deck"><span class="card back"></span><small>Deck ${view.deckCount}</small></div>
+    <div class="pile discard${fx.has('discard') ? ' fx-pop' : ''}" id="discard">${top}<small>Discard ${view.discardCount}</small>
+      ${view.discardTop ? (view.discardClaimed ? '<small class="claimed-hint" id="claimed">Claimed: a slap now costs a penalty card.</small>' : '<small class="open-hint">Open: slap a matching card.</small>') : ''}</div>
+    ${myTurn && view.drawn ? `<div class="pile drawn${fx.has('drawn') ? ' fx-rise' : ''}" id="drawn">${cardHtml(view.drawn, 'drawn')}<small>You drew this</small></div>` : ''}
   </section>`;
 
   const btns = [];
@@ -293,32 +399,34 @@ function renderBoard() {
     }
     btns.push('<button data-act="skippower">Skip power</button>');
   }
-  const slapBtn = `<button class="slapbtn${local.armed || local.giving ? ' on' : ''}" data-act="slap">${local.armed || local.giving ? 'Cancel slap' : 'Slap!'}</button>`;
+  const slapOn = local.armed || local.giving;
+  const slapBtn = `<button class="slapbtn${slapOn ? ' on' : ''}" data-act="slap" aria-pressed="${slapOn ? 'true' : 'false'}">${slapOn ? 'Cancel slap' : 'Slap!'}</button>`;
 
-  return `${banner}
-    ${table}
-    <p class="hint" id="hint">${mode.hint}</p>
-    <div class="actions">${btns.join('')}${slapBtn}</div>
-    ${others.map(seat).join('')}
-    ${m ? seat(m) : ''}`;
+  const status = `<div class="status${mode.slap ? ' slap' : mode.mine ? ' mine' : ''}">
+      <p class="hint" id="hint">${mode.hint}</p>
+      <p class="last" id="last">${lastEvent ? esc(lastEvent) : ''}</p></div>`;
+
+  return `${banner}<div class="board">
+    <div class="felt">${status}${table}<div class="actions">${btns.join('')}${slapBtn}</div></div>
+    <div class="seats">${others.map(seat).join('')}${m ? seat(m) : ''}</div></div>`;
 }
 
 function renderRps() {
   const r = view.rps;
   const inIt = r.players.includes(view.you);
   const last = r.last
-    ? `<p class="muted">Last round: ${Object.entries(r.last).map(([id, k]) => `${esc(nameOf(id))} ${esc(rpsName(k))}`).join(', ')}</p>` : '';
+    ? `<p class="muted">Last round: ${Object.entries(r.last).map(([id, k]) => `${esc(nameOf(id))} ${esc(rpsName(k))}`).join(', ')}. Tied again.</p>` : '';
   const picked = r.picks[view.you];
   let ctl;
   if (!inIt) ctl = `<p class="muted">Tied players are playing rock-paper-scissors: ${r.players.map(nameOf).map(esc).join(', ')}.</p>`;
-  else if (picked && picked !== 'hidden') ctl = `<p>You picked <b>${esc(rpsName(picked))}</b>. Waiting for the others...</p>`;
-  else ctl = `<div class="actions rps">
+  else if (picked && picked !== 'hidden') ctl = `<p>You picked <b>${esc(rpsName(picked))}</b>. Waiting for the others.</p>`;
+  else ctl = `<div class="rps">
       <button data-act="rps" data-pick="r">Rock</button>
       <button data-act="rps" data-pick="p">Paper</button>
       <button data-act="rps" data-pick="s">Scissors</button></div>`;
   return `<section class="panel" id="rps"><h2>Tie-break: rock paper scissors</h2>
     <p>Tied: ${r.players.map(nameOf).map(esc).join(', ')} (round ${r.round + 1})</p>${last}${ctl}</section>
-    ${resultHands()}`;
+    <div class="seats">${resultHands()}</div>`;
 }
 const rpsName = (k) => ({ r: 'rock', p: 'paper', s: 'scissors' }[k] || k);
 
@@ -328,8 +436,8 @@ function resultHands() {
   return view.players.map((p) => `
     <section class="seat${winners.includes(p.id) && view.phase === 'done' ? ' winner' : ''}">
       <div class="seathead"><b>${esc(p.name)}${p.id === view.you ? ' (you)' : ''}</b>
-      <span class="total">${totals[p.id] === undefined ? '' : `Total ${totals[p.id]}`}</span>
-      ${winners.includes(p.id) && view.phase === 'done' ? '<span class="badge turn">winner</span>' : ''}</div>
+      ${winners.includes(p.id) && view.phase === 'done' ? '<span class="badge turn">winner</span>' : ''}
+      <span class="total">${totals[p.id] === undefined ? '' : `Total ${totals[p.id]}`}</span></div>
       ${handHtml(p, null)}</section>`).join('');
 }
 
@@ -337,11 +445,11 @@ function renderDone() {
   const winners = (view.result && view.result.winners) || [];
   const names = winners.map(nameOf).map(esc).join(' & ') || 'nobody';
   const youWon = winners.includes(view.you);
-  return `<section class="panel result" id="result">
+  return `<div class="done-wrap"><section class="panel result" id="result">
     <h2>${youWon ? 'You win!' : `${names} wins`}</h2>
-    <p class="muted">Lowest total wins.</p></section>
+    <p class="muted">Lowest total wins. Red kings count -3.</p></section>
     ${resultHands()}
-    <button class="link" data-act="leave">Back to start</button>`;
+    <button class="link" data-act="leave">Back to start</button></div>`;
 }
 
 // ---- events ----------------------------------------------------------------
