@@ -229,3 +229,35 @@ test('responses never contain other players\' hidden cards, token hashes or raw 
   assert.equal(other.body.view.players[1].hand.some((h) => h.card), false);
   assert.equal(JSON.stringify(other.body).includes('"deck"'), false);
 });
+
+test('power responses carry the reveal as seen; a Queen reveal is not in the view', async () => {
+  const db = fakeDb();
+  const s = slapState();
+  s.discard.push(c('Q', 'S'));
+  s.pending = [{ type: 'Q', by: 'a' }];
+  s.acted = true;
+  await seed(db, s, { a: 'ta', b: 'tb' });
+  const q = await handleAct(db, { code: 'ABCD', token: 'ta', action: 'power', args: { type: 'Q', Q: { targetId: 'b', slot: 2 } } }, quiet);
+  assert.equal(q.status, 200);
+  assert.equal(q.body.seen.uid, s.players[1].hand[2].uid);
+  assert.ok(q.body.view.players.every((p) => p.hand.every((e) => e.card === undefined)));
+  const again = await handleRoom(db, { action: 'view', code: 'ABCD', token: 'ta' }, quiet);
+  assert.ok(again.body.view.players.every((p) => p.hand.every((e) => e.card === undefined)));
+});
+
+test('a King reveal is in the response and the view until it is resolved', async () => {
+  const db = fakeDb();
+  const s = slapState();
+  s.discard.push(c('K', 'S'));
+  s.pending = [{ type: 'K', by: 'a' }];
+  s.acted = true;
+  await seed(db, s, { a: 'ta', b: 'tb' });
+  const k = await handleAct(db, { code: 'ABCD', token: 'ta', action: 'power', args: { type: 'K', K: { targetId: 'b', slot: 1 } } }, quiet);
+  assert.equal(k.status, 200);
+  assert.equal(k.body.seen.uid, s.players[1].hand[1].uid);
+  assert.equal(k.body.view.players[1].hand[1].card.uid, s.players[1].hand[1].uid);
+  const done = await handleAct(db, { code: 'ABCD', token: 'ta', action: 'confirmKing', args: { swapWithSlot: null } }, quiet);
+  assert.equal(done.status, 200);
+  assert.deepEqual(done.body.view.viewable, []);
+  assert.ok(done.body.view.players.every((p) => p.hand.every((e) => e.card === undefined)));
+});

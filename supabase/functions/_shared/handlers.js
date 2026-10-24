@@ -140,7 +140,9 @@ function applyAction(state, id, action, args) {
     case 'discard':
       return { state: engine.discardDrawn(state, id) };
     case 'power': {
-      const { state: next, seen } = engine.usePower(state, id, args);
+      // The web client nests the target under the power letter: { type: 'Q', Q: { targetId, slot } }.
+      const nested = args[args.type] && typeof args[args.type] === 'object' ? args[args.type] : {};
+      const { state: next, seen } = engine.usePower(state, id, { ...args, ...nested, type: args.type });
       return seen === undefined ? { state: next } : { state: next, extra: { seen } };
     }
     case 'confirmKing':

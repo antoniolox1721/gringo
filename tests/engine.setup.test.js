@@ -64,6 +64,31 @@ test('peekSetup returns the two cards and rejects a second peek', () => {
   assert.throws(() => peekSetup(state, 'p1', [1, 2]), /already peeked/);
 });
 
+test('a setup peek is returned as seen but never persisted in the view', () => {
+  const s = startGame(lobby(2), 'p1', seededRng());
+  const { state, seen } = peekSetup(s, 'p1', [1, 2]);
+  assert.deepEqual(seen.map((x) => x.uid), [s.players[0].hand[1].uid, s.players[0].hand[2].uid]);
+  const v = viewFor(state, 'p1');
+  assert.deepEqual(v.viewable, []);
+  assert.ok(v.players.every((p) => p.hand.every((e) => e.card === undefined)));
+  assert.equal(v.players[0].ready, true);
+  assert.equal(v.players[1].ready, false);
+});
+
+test('the last player to peek never sees their cards in the view once turns start', () => {
+  let s = startGame(lobby(3), 'p1', seededRng());
+  s = peekSetup(s, 'p1', [0, 1]).state;
+  s = peekSetup(s, 'p2', [2, 3]).state;
+  const last = peekSetup(s, 'p3', [0, 3]);
+  assert.equal(last.seen.length, 2);
+  assert.equal(last.state.phase, 'turns');
+  for (const id of ['p1', 'p2', 'p3']) {
+    const v = viewFor(last.state, id);
+    assert.deepEqual(v.viewable, []);
+    assert.ok(v.players.every((p) => p.hand.every((e) => e.card === undefined)), id);
+  }
+});
+
 test('peekSetup validates slots', () => {
   const s = startGame(lobby(2), 'p1', seededRng());
   assert.throws(() => peekSetup(s, 'p1', [0]), /2/);
@@ -96,14 +121,16 @@ test('removePlayer in lobby removes the player', () => {
 
 test('viewFor never contains another player\'s card objects', () => {
   let s = startGame(lobby(3), 'p1', seededRng());
-  s = peekSetup(s, 'p1', [0, 1]).state;
+  const peek = peekSetup(s, 'p1', [0, 1]);
+  s = peek.state;
   const view = viewFor(s, 'p1');
   const text = JSON.stringify(view);
   for (const other of s.players.slice(1)) {
     for (const card of other.hand) assert.ok(!text.includes(`"uid":${card.uid},`) && !text.includes(`"uid":${card.uid}}`), 'leaked opponent card');
   }
   const mine = view.players[0].hand;
-  assert.ok(mine[0].card && mine[1].card);
+  assert.deepEqual(peek.seen.map((x) => x.uid), [s.players[0].hand[0].uid, s.players[0].hand[1].uid]);
+  assert.ok(mine.every((e) => e.card === undefined), 'setup peek must not persist in the view');
   assert.equal(mine[2].card, undefined);
   assert.equal(mine[2].empty, false);
 });

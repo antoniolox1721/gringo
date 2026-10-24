@@ -84,8 +84,14 @@ function connectedPlayers(s) {
   return s.players.filter((p) => p.connected);
 }
 
+// `viewable` only ever holds a King reveal awaiting confirmKing/skipPower. Setup and Queen peeks are
+// returned once as `seen` and never persisted, so a refetch cannot show them again.
 function clearView(p) {
   p.viewable = [];
+}
+
+function clearAllViews(s) {
+  for (const p of s.players) clearView(p);
 }
 
 // Drops every "viewable" reference to a slot whose content just changed.
@@ -170,7 +176,6 @@ export function peekSetup(state, id, slots) {
   const next = produce(state, (s) => {
     const p = playerOf(s, id);
     p.seenSlots = slots.slice();
-    p.viewable = slots.map((slot) => ({ ownerId: id, slot }));
     checkSetupDone(s);
   });
   return { state: next, seen };
@@ -211,6 +216,7 @@ export function viewFor(state, playerId) {
       name: p.name,
       connected: p.connected,
       gringo: p.gringo,
+      ready: p.seenSlots.length > 0,
       hand: p.hand.map((card, slot) => {
         const entry = { slot, empty: card === null };
         if (card && (done || sees(p.id, slot))) entry.card = structuredClone(card);
@@ -383,6 +389,7 @@ function handleDisconnect(s, id) {
   }
   if (s.phase !== 'turns' && s.phase !== 'final') return;
   s.pending = s.pending.filter((x) => x.by !== id);
+  clearView(playerOf(s, id));
   if (s.players[s.turn].id === id) {
     if (s.drawn) {
       s.discard.push(s.drawn);
@@ -450,7 +457,6 @@ export function usePower(state, id, args) {
       finishPower(s);
     } else if (pend.type === 'Q') {
       checkSlot(t, args.slot);
-      p.viewable.push({ ownerId: t.id, slot: args.slot });
       seen = structuredClone(t.hand[args.slot]);
       finishPower(s);
     } else {
@@ -586,6 +592,7 @@ function finishDraft(s) {
   const best = Math.min(...eligible.map((p) => totals[p.id]));
   const winners = eligible.filter((p) => totals[p.id] === best).map((p) => p.id);
   s.result = { totals, winners };
+  clearAllViews(s);
   s.drawn = null;
   s.pending = [];
   s.acted = false;
