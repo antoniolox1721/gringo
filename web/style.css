@@ -154,13 +154,15 @@ button.small { min-height: 44px; padding: 6px 14px; font-size: .88rem; border-ra
 .held small { color: var(--on-felt); font-weight: 650; }
 .gap-label { position: absolute; inset: 0; display: grid; place-items: center; font: 600 .7rem/1 var(--sans); color: var(--on-felt-muted); letter-spacing: .04em; }
 
+/* Final round: a lacquered plaque in the top bar, in place of the room code. */
 .final {
-  position: absolute; top: 2px; left: 50%; translate: -50% 0; z-index: 3; width: max-content; max-width: 100%;
-  padding: 6px 12px; border-radius: 12px; background: #1d1407; color: #fbe9c2; border: 1px solid #8a6420;
-  font-size: .82rem; line-height: 1.3; text-align: center; box-shadow: 0 8px 18px -8px rgba(0, 0, 0, .7);
-  animation: drop-in .45s var(--settle) both;
+  flex: 1 1 auto; min-width: 0; max-width: 30rem; margin: 0 auto; padding: 4px 12px; border-radius: 12px;
+  background: #1d1407; color: #fbe9c2; border: 1px solid #8a6420; font-size: .78rem; line-height: 1.25;
+  box-shadow: 0 8px 18px -8px rgba(0, 0, 0, .7); animation: drop-in .45s var(--settle) both;
 }
-.final b { color: #ffd27a; font: italic 700 .95rem/1 var(--serif); margin-right: 4px; }
+.final b { display: block; color: #ffd27a; font: italic 700 .92rem/1.1 var(--serif); }
+.final span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.final + .icon { margin-left: 0; }
 @keyframes drop-in { from { opacity: 0; transform: translateY(-12px) scale(.94); } }
 
 .hint {
@@ -236,9 +238,9 @@ button.small { min-height: 44px; padding: 6px 14px; font-size: .88rem; border-ra
 .held-mini { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 2px; --cw: var(--cw-top); z-index: 2; }
 .held-mini small { font-size: .7rem; color: var(--on-felt); background: var(--chip); padding: 1px 6px; border-radius: 6px; }
 .held-mini .card { rotate: 8deg; box-shadow: 0 0 0 2px var(--seat), 0 10px 18px -6px rgba(0, 0, 0, .7); }
-.pos-top .held-mini { left: 100%; top: 26px; margin-left: 4px; }
-.pos-left .held-mini { left: 100%; top: 50%; margin: -40px 0 0 6px; --cw: var(--cw-side); }
-.pos-right .held-mini { right: 100%; top: 50%; margin: -40px 6px 0 0; --cw: var(--cw-side); }
+.pos-top .held-mini { left: 50%; top: 100%; translate: -50% -10px; flex-direction: row; gap: 6px; }
+/* A side player holds their drawn card up over their own hand. */
+.pos-left .held-mini, .pos-right .held-mini { left: 50%; top: 55%; translate: -50% -50%; --cw: calc(var(--cw-side) * 1.1); }
 
 /* ---- slots: stable positions, lift on hover/select, a soft shadow that spreads as the card rises ---- */
 .slot {
@@ -487,10 +489,6 @@ input:focus-visible { outline: none; border-color: var(--focus); }
   .pos-left .chip, .pos-right .chip { min-height: 0; }
   .piles { grid-template-columns: auto auto auto; gap: 6px 18px; }
   .piles .held { grid-column: auto; }
-  .final {
-    position: fixed; top: calc(var(--safe-t) + 12px); max-width: 44vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    padding: 5px 10px;
-  }
   .hero { height: 110px; --cw: 56px; }
   .fan-card { margin-left: -28px; }
 }

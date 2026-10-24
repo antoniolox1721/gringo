@@ -247,15 +247,17 @@ function planFlights(p, v) {
 }
 
 function launch(plan, fromRects) {
+  let skipped = false;
   plan.forEach((f, i) => {
     const from = f.fromAfter ? rectOf(f.from) : fromRects[i];
     const to = rectOf(f.to);
-    if (!from || !to) { land(f, true); return; }
+    if (!from || !to) { land(f, true); skipped = true; return; }
     motion.fly({
       from, to, face: f.face || null, back: BACK, flip: f.flip || null, delay: f.delay || 0, arc: f.arc || 1,
       onLand: (silent) => land(f, silent),
     });
   });
+  if (skipped) render();
 }
 
 function land(f, silent) {
@@ -472,10 +474,10 @@ const SOUND_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l
   '<path class="waves" d="M16 9.5a3.5 3.5 0 0 1 0 5M18.5 7a7 7 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>' +
   '<path class="mute" d="M16.5 9.5l5 5m0-5l-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 
-function barHtml(brand = true) {
+function barHtml(brand = true, plaque = '') {
   const net = failures >= 2
     ? '<span class="net" role="status" aria-label="Connection lost. Reconnecting…" title="Connection lost. Reconnecting…">Reconnecting…</span>' : '';
-  const room = session ? `<span class="room" title="Room code">Room <b>${esc(session.code)}</b></span>` : '';
+  const room = plaque || !session ? plaque : `<span class="room" title="Room code">Room <b>${esc(session.code)}</b></span>`;
   const on = soundOn();
   return `<header class="bar" data-key="bar">${brand ? '<span class="brand">Gringo</span>' : ''}${room}${net}
     <button class="icon sound${on ? ' on' : ''}" data-act="sound" aria-pressed="${on}" aria-label="Sound effects" title="Sound ${on ? 'on' : 'off'}">${SOUND_ICON}</button></header>`;
@@ -652,7 +654,7 @@ function gameHtml() {
     const who = nameOf(view.endedBy.id);
     const why = view.endedBy.reason === 'gringo' ? `${esc(who)} called Gringo` : `${esc(who)} has no cards left`;
     const left = (view.finalLeft || []).map(nameOf).map(esc).join(', ');
-    banner = `<div class="final" id="final-banner" data-key="final"><b>Final round</b> ${why}. Still to play: ${left || 'nobody'}.</div>`;
+    banner = `<div class="final" id="final-banner" data-key="final" role="status"><b>Final round</b><span>${why}. Still to play: ${left || 'nobody'}.</span></div>`;
   }
 
   const shown = pileHold || { card: view.discardTop, claimed: view.discardClaimed };
@@ -663,7 +665,7 @@ function gameHtml() {
   const deckDepth = Math.min(4, Math.ceil(view.deckCount / 12));
   const drawn = myTurn && view.drawn
     ? `<div class="pile held" id="drawn" data-key="drawn" data-flip="drawn">${cardHtml(view.drawn, { fx: `held:${view.you}`, cls: ghosts.has(`held:${view.you}`) ? 'ghost' : '' })}<small>Your card</small></div>` : '';
-  const center = `<div class="center" data-key="center">${banner}<div class="piles">
+  const center = `<div class="center" data-key="center"><div class="piles">
     <div class="pile deck depth-${deckDepth}" data-key="deck" data-flip="deck">${view.deckCount ? BACK.replace('class="card back"', 'class="card back" data-fx="deck"') : '<span class="card gap" data-fx="deck"></span>'}<small>Deck <b>${view.deckCount}</b></small></div>
     <div class="pile discard${view.discardCount ? '' : ' empty'}" id="discard" data-key="discard" data-flip="pile">${under}${pileCard}<small>Pile <b>${view.discardCount}</b></small></div>
     ${drawn}</div></div>`;
@@ -690,7 +692,7 @@ function gameHtml() {
   }
 
   const status = `<p class="hint${mode.slap ? ' slap' : mode.mine ? ' mine' : ''}" id="hint" data-key="hint" aria-live="polite"><span>${mode.hint}</span></p>`;
-  return `<div class="screen game n${view.players.length}${local.armed || local.giving ? ' slapping' : ''}" data-key="game" style="--me: var(--seat-${seatIndex(view.you)})">${barHtml()}
+  return `<div class="screen game n${view.players.length}${local.armed || local.giving ? ' slapping' : ''}" data-key="game" style="--me: var(--seat-${seatIndex(view.you)})">${barHtml(true, banner)}
     <div class="table" data-key="table">${seats}${center}</div>
     ${status}
     ${m ? seatHtml(m, 'bottom', mode) : ''}
