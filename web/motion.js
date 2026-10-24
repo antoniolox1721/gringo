@@ -29,17 +29,18 @@ export const busy = () => live.size > 0;
 
 // from/to: { x, y, w, rot } with x/y the centre in viewport px and w the upright card width.
 // face/back: card markup. flip 'up' turns back -> face mid-air, 'down' face -> back.
-export function fly({ from, to, face, back, flip = null, delay = 0, onLand }) {
+export function fly({ from, to, face, back, flip = null, delay = 0, arc = 1, onLand }) {
   const dx = from.x - to.x;
   const dy = from.y - to.y;
   const dist = Math.hypot(dx, dy) || 1;
   const s0 = from.w / to.w;
   const dur = Math.round(Math.min(460, Math.max(280, 240 + dist * 0.32)));
-  // Bend the path toward the top of the screen so every flight reads as a toss, not a slide.
+  // Bend the path toward the top of the screen so every flight reads as a toss, not a slide;
+  // arc -1 bends the other way, so two cards trading places pass each other.
   let nx = -dy / dist;
   let ny = dx / dist;
   if (ny > 0) { nx = -nx; ny = -ny; }
-  const lift = Math.min(70, dist * 0.2);
+  const lift = Math.min(70, dist * 0.2) * arc;
   const mx = dx / 2 + nx * lift;
   const my = dy / 2 + ny * lift;
   const tilt = dx > 0 ? -9 : 9;

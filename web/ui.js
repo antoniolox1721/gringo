@@ -241,7 +241,7 @@ function planFlights(p, v) {
     const [a, b] = changed;
     const ka = `slot:${a.pid}:${a.slot}`;
     const kb = `slot:${b.pid}:${b.slot}`;
-    out.push({ from: ka, to: kb, sound: 'land' }, { from: kb, to: ka, delay: 40 });
+    out.push({ from: ka, to: kb, sound: 'land' }, { from: kb, to: ka, delay: 40, arc: -1 });
   }
   return out;
 }
@@ -252,7 +252,7 @@ function launch(plan, fromRects) {
     const to = rectOf(f.to);
     if (!from || !to) { land(f, true); return; }
     motion.fly({
-      from, to, face: f.face || null, back: BACK, flip: f.flip || null, delay: f.delay || 0,
+      from, to, face: f.face || null, back: BACK, flip: f.flip || null, delay: f.delay || 0, arc: f.arc || 1,
       onLand: (silent) => land(f, silent),
     });
   });
@@ -610,7 +610,7 @@ function slotHtml(p, e, mode) {
     name = cardSpoken(card);
   } else { inner = backHtml(ghost, key); name = 'face-down card'; }
   const label = `${mine ? 'Your' : `${p.name}'s`} card ${e.slot + 1}: ${name}`;
-  return `<button class="slot${tap ? ' tap' : ''}${sel ? ' sel' : ''}${rv ? ' revealing' : ''}" data-key="${esc(key)}" data-owner="${esc(p.id)}" data-slot="${e.slot}"` +
+  return `<button class="slot${tap ? ' tap' : ''}${sel ? ' sel' : ''}${rv ? ' revealing' : kingHeld ? ' peeked' : ''}" data-key="${esc(key)}" data-owner="${esc(p.id)}" data-slot="${e.slot}"` +
     `${tap ? '' : ' tabindex="-1" aria-disabled="true"'} aria-label="${esc(label)}">${inner}</button>`;
 }
 
