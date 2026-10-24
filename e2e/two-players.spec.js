@@ -118,8 +118,8 @@ test('full game: wrong slap grows hand, gringo, final round, result, hidden info
   await guest.page.click('[data-act=discard]');
   await expect(host.page.locator('#hint')).toContainText('Your turn');
   await host.page.click('[data-act=gringo]');
-  await expect(host.page.locator('#final-banner')).toContainText('Hanna called Gringo');
-  await expect(guest.page.locator('#final-banner')).toContainText('Hanna called Gringo');
+  await expect(host.page.locator('#final-banner')).toContainText('You called Gringo. Last turns: Gus.');
+  await expect(guest.page.locator('#final-banner')).toContainText('Hanna called Gringo. Last turns: You.');
   await expect(guest.page.locator('#hint')).toContainText('Your turn');
   await assertHostBlind();
 

@@ -550,9 +550,10 @@ function lobbyHtml() {
     </section></div>`;
 }
 
-function kickHtml(p) {
+function kickHtml(p, compact = false) {
   const armed = local.kickArm === p.id;
-  return `<button class="kick${armed ? ' armed' : ''}" data-act="kick" data-id="${esc(p.id)}" aria-label="${armed ? `Confirm: remove ${esc(p.name)}` : `Remove ${esc(p.name)}`}">${armed ? 'Remove?' : 'Kick'}</button>`;
+  const label = armed ? 'Remove?' : compact ? '<span aria-hidden="true">×</span>' : 'Kick';
+  return `<button class="kick${compact ? ' mini' : ''}${armed ? ' armed' : ''}" data-act="kick" data-id="${esc(p.id)}" aria-label="${armed ? `Confirm: remove ${esc(p.name)}` : `Remove ${esc(p.name)}`}" title="Remove ${esc(p.name)}">${label}</button>`;
 }
 
 // What tapping a slot means right now. `mine` marks states where this player must act.
@@ -635,7 +636,7 @@ function seatHtml(p, pos, mode) {
   return `<section class="seat pos-${pos}${isMe ? ' me' : ''}${active ? ' active' : ''}${p.connected ? '' : ' offline'}" data-key="seat:${esc(p.id)}" data-player="${esc(p.id)}" data-rot="${rot}" style="--seat: var(--seat-${seatIndex(p.id)}); --n: ${p.hand.length}">
     <i class="ring" aria-hidden="true"></i>
     <div class="chip"><span class="dot" aria-hidden="true"></span><b class="name">${esc(p.name)}</b>${isMe ? '<span class="you">you</span>' : ''}
-      <span class="count" aria-label="${n} cards">${n}</span>${badges}${isHost && !isMe ? kickHtml(p) : ''}</div>
+      <span class="count" aria-label="${n} cards">${n}</span>${badges}${isHost && !isMe ? kickHtml(p, true) : ''}</div>
     <div class="hand">${p.hand.map((e) => slotHtml(p, e, mode)).join('')}</div>${held}
   </section>`;
 }
@@ -652,10 +653,12 @@ function gameHtml() {
 
   let banner = '';
   if (view.phase === 'final' && view.endedBy) {
-    const who = nameOf(view.endedBy.id);
-    const why = view.endedBy.reason === 'gringo' ? `${esc(who)} called Gringo` : `${esc(who)} has no cards left`;
-    const left = (view.finalLeft || []).map(nameOf).map(esc).join(', ');
-    banner = `<div class="final" id="final-banner" data-key="final" role="status"><b>Final round</b><span>${why}. Still to play: ${left || 'nobody'}.</span></div>`;
+    const mine = view.endedBy.id === view.you;
+    const who = esc(whoName(view.endedBy.id));
+    const why = view.endedBy.reason === 'gringo' ? `${who} called Gringo` : `${who} ${mine ? 'have' : 'has'} no cards left`;
+    const left = (view.finalLeft || []).map(whoName).map(esc).join(', ');
+    const text = `${why}. ${left ? `Last turns: ${left}.` : 'No turns left.'}`;
+    banner = `<div class="final" id="final-banner" data-key="final" role="status" title="${text}"><b>Final round</b><span>${text}</span></div>`;
   }
 
   const shown = pileHold || { card: view.discardTop, claimed: view.discardClaimed };
@@ -665,7 +668,8 @@ function gameHtml() {
   const under = view.discardCount > 1 ? '<span class="under" aria-hidden="true"></span>' : '';
   const deckDepth = Math.min(4, Math.ceil(view.deckCount / 12));
   const drawn = myTurn && view.drawn
-    ? `<div class="pile held" id="drawn" data-key="drawn" data-flip="drawn">${cardHtml(view.drawn, { fx: `held:${view.you}`, cls: ghosts.has(`held:${view.you}`) ? 'ghost' : '' })}<small>Your card</small></div>` : '';
+    ? `<div class="pile held" id="drawn" data-key="drawn" data-flip="drawn">${cardHtml(view.drawn, { fx: `held:${view.you}`, cls: ghosts.has(`held:${view.you}`) ? 'ghost' : '' })}<small>Your card</small></div>`
+    : '<div class="pile held hold" data-key="drawn" aria-hidden="true"><span class="card gap"></span><small>Your card</small></div>';
   const center = `<div class="center" data-key="center"><div class="piles">
     <div class="pile deck depth-${deckDepth}" data-key="deck" data-flip="deck">${view.deckCount ? BACK.replace('class="card back"', 'class="card back" data-fx="deck"') : '<span class="card gap" data-fx="deck"></span>'}<small>Deck <b>${view.deckCount}</b></small></div>
     <div class="pile discard${view.discardCount ? '' : ' empty'}" id="discard" data-key="discard" data-flip="pile">${under}${pileCard}<small>Pile <b>${view.discardCount}</b></small></div>
@@ -685,8 +689,10 @@ function gameHtml() {
       }
     }
     if (pend && pend.by === view.you && !local.armed && !local.giving) {
-      if (pend.type === 'K' && pend.revealed && !local.kingSwap) btns.push(b('kingswap', 'Swap', 'primary'), b('kingkeep', 'Leave it'));
-      btns.push(b('skippower', 'Skip power'));
+      if (pend.type === 'K' && pend.revealed) {
+        if (!local.kingSwap) btns.push(b('kingswap', 'Swap', 'primary'));
+        btns.push(b('kingkeep', 'Leave it'));
+      } else btns.push(b('skippower', 'Skip power'));
     }
     const slapOn = local.armed || local.giving;
     btns.push(`<button class="slapbtn${slapOn ? ' on' : ''}" data-act="slap" data-key="b:slap" aria-pressed="${slapOn ? 'true' : 'false'}">${slapOn ? 'Cancel slap' : 'Slap'}</button>`);
@@ -736,19 +742,28 @@ function resultHands() {
     return `<section class="seat result-seat${win ? ' winner' : ''}" data-key="r:${esc(p.id)}" data-player="${esc(p.id)}" style="--seat: var(--seat-${seatIndex(p.id)})">
       <div class="chip"><span class="dot" aria-hidden="true"></span><b class="name">${esc(p.name)}</b>${p.id === view.you ? '<span class="you">you</span>' : ''}
       ${win ? '<span class="badge win">winner</span>' : ''}${p.connected ? '' : '<span class="badge off">offline</span>'}
-      <span class="total">${totals[p.id] === undefined ? '' : `Total ${totals[p.id]}`}</span></div>
+      <span class="total" style="--i:${i}">${totals[p.id] === undefined ? '' : `Total ${totals[p.id]}`}</span></div>
       <div class="hand">${cards}</div></section>`;
   }).join('');
+}
+
+function tieBroken() {
+  const r = view.result;
+  if (!r || r.winners.length !== 1) return false;
+  const best = r.totals[r.winners[0]];
+  return view.players.some((p) => p.connected && p.id !== r.winners[0] && r.totals[p.id] === best);
 }
 
 function doneHtml() {
   const winners = (view.result && view.result.winners) || [];
   const names = winners.map(nameOf).map(esc).join(' & ') || 'Nobody';
   const youWon = winners.includes(view.you);
-  return `<div class="screen end" data-key="done">${barHtml()}<section class="placard result" id="result">
+  const burst = youWon
+    ? `<div class="burst" aria-hidden="true">${['♠', '♥', '♦', '♣', '♥', '♠', '♦', '♣', '♥', '♦', '♠', '♣'].map((g, k) => `<i class="${g === '♥' || g === '♦' ? 'red' : ''}" style="--k:${k}">${g}</i>`).join('')}</div>` : '';
+  return `<div class="screen end" data-key="done">${barHtml()}<section class="placard result${youWon ? ' won' : ''}" id="result">${burst}
     <p class="eyebrow">Game over</p>
-    <h2>${youWon ? 'You win!' : `${names} wins`}</h2>
-    <p class="muted">Lowest total wins. Red kings count −3, jokers 0.</p></section>
+    <h2>${youWon ? 'You win!' : `${names} ${winners.length > 1 ? 'win' : 'wins'}`}</h2>
+    <p class="muted">${tieBroken() ? 'Tied for lowest, settled by rock, paper, scissors.' : 'Lowest total wins. Red kings count −3, jokers 0.'}</p></section>
     <div class="results">${resultHands()}</div>
     <button class="primary again" data-act="leave">Back to start</button></div>`;
 }
@@ -853,7 +868,7 @@ async function doJoin() {
     const r = await call('room', { action: 'join', code, name });
     homeError = '';
     startSession({ code, playerId: r.playerId, token: r.token });
-  } catch (e) { homeFail(friendly(e)); } finally { busy = false; }
+  } catch (e) { homeFail(friendly(e), /room/i.test(e.message) ? 'code' : undefined); } finally { busy = false; }
 }
 
 function onSlot(ownerId, slot) {
