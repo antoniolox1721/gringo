@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  draw, keep, discardDrawn, nextTurn, removePlayer,
+  draw, keep, discardDrawn, nextTurn, removePlayer, viewFor, slap,
 } from '../supabase/functions/_shared/engine.js';
 import { c, stackedGame, seededRng } from './helpers.js';
 
@@ -176,4 +176,21 @@ test('draw with empty deck and single-card pile throws no cards and keeps the ca
   const g = game({ deck: [], discard: [c('2', 'D')] });
   assert.throws(() => draw(g, 'a'), /no cards/);
   assert.equal(g.discard.length, 1);
+});
+
+test('each slot carries a public change counter that moves only when its card changes', () => {
+  let s = game();
+  const before = viewFor(s, 'b').players[0].hand.map((e) => e.ver);
+  assert.deepEqual(before, [0, 0, 0, 0]);
+  s = draw(s, 'a').state;
+  s = keep(s, 'a', 2);
+  assert.deepEqual(viewFor(s, 'b').players[0].hand.map((e) => e.ver), [0, 0, 1, 0]);
+  assert.deepEqual(viewFor(s, 'a').players[1].hand.map((e) => e.ver), [0, 0, 0, 0]);
+});
+
+test('a penalty card gets its own slot counter', () => {
+  const s = slap(game(), 'b', { ownerId: 'b', slot: 0 }).state;
+  const hand = viewFor(s, 'a').players[1].hand;
+  assert.equal(hand.length, 5);
+  assert.equal(hand[4].ver, 1);
 });

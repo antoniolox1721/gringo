@@ -94,6 +94,12 @@ function clearAllViews(s) {
   for (const p of s.players) clearView(p);
 }
 
+// Public per-slot change counter: everyone at a real table sees which slot a card went into.
+function touch(p, slot) {
+  if (!p.moves) p.moves = p.hand.map(() => 0);
+  p.moves[slot] = (p.moves[slot] || 0) + 1;
+}
+
 // Drops every "viewable" reference to a slot whose content just changed.
 function invalidateSlot(s, ownerId, slot) {
   for (const p of s.players) {
@@ -154,7 +160,10 @@ export function startGame(state, byId, rng = secureRandom) {
   if (state.players.length < 2) throw new Error('need at least 2 players');
   return produce(state, (s) => {
     const deck = shuffle(buildDeck(), rng);
-    for (const p of s.players) p.hand = deck.splice(0, HAND_SIZE);
+    for (const p of s.players) {
+      p.hand = deck.splice(0, HAND_SIZE);
+      p.moves = p.hand.map(() => 0);
+    }
     s.discard = [];
     s.deck = deck;
     s.discardClaimed = false;
@@ -218,7 +227,7 @@ export function viewFor(state, playerId) {
       gringo: p.gringo,
       ready: p.seenSlots.length > 0,
       hand: p.hand.map((card, slot) => {
-        const entry = { slot, empty: card === null };
+        const entry = { slot, empty: card === null, ver: (p.moves && p.moves[slot]) || 0 };
         if (card && (done || sees(p.id, slot))) entry.card = structuredClone(card);
         return entry;
       }),
@@ -341,6 +350,7 @@ export function keep(state, id, slot) {
     const p = playerOf(s, id);
     const old = p.hand[slot];
     p.hand[slot] = s.drawn;
+    touch(p, slot);
     s.drawn = null;
     clearView(p);
     invalidateSlot(s, id, slot);
@@ -433,6 +443,8 @@ function finishPower(s) {
 
 function swapCards(s, a, aSlot, b, bSlot) {
   [a.hand[aSlot], b.hand[bSlot]] = [b.hand[bSlot], a.hand[aSlot]];
+  touch(a, aSlot);
+  touch(b, bSlot);
   invalidateSlot(s, a.id, aSlot);
   invalidateSlot(s, b.id, bSlot);
 }
@@ -521,10 +533,12 @@ export function slap(state, id, args, rng = secureRandom) {
     if (ok) {
       const taken = o.hand[args.slot];
       o.hand[args.slot] = null;
+      touch(o, args.slot);
       invalidateSlot(s, o.id, args.slot);
       if (mustGive) {
         o.hand[args.slot] = p.hand[args.giveSlot];
         p.hand[args.giveSlot] = null;
+        touch(p, args.giveSlot);
         invalidateSlot(s, p.id, args.giveSlot);
       }
       discardCard(s, taken, id);
@@ -533,7 +547,10 @@ export function slap(state, id, args, rng = secureRandom) {
       if (other) checkZeroDraft(s, o.id);
     } else {
       const penalty = takeCard(s, rng);
-      if (penalty) p.hand.push(penalty);
+      if (penalty) {
+        p.hand.push(penalty);
+        touch(p, p.hand.length - 1);
+      }
     }
   });
   return { state: next, ok };
