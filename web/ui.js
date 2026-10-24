@@ -342,9 +342,11 @@ function hideReveals(keys) {
 // Turns the cards at `keys` away, applies `mutate`, re-renders, and turns the new faces in.
 function flipSwap(keys, mutate) {
   const els = keys.map((k) => $app.querySelector(`[data-fx="${CSS.escape(k)}"]`)).filter(Boolean);
-  Promise.all(els.map((el) => motion.turnAway(el))).then(() => {
+  const away = els.map((el) => motion.turnAway(el)).filter(Boolean);
+  Promise.all(away.map((a) => a.finished.catch(() => {}))).then(() => {
     mutate();
     render();
+    for (const a of away) a.cancel();
     blip('flip');
     for (const k of keys) motion.turnIn($app.querySelector(`[data-fx="${CSS.escape(k)}"]`));
   });
@@ -372,7 +374,6 @@ function dropStaleReveals(p, v) {
 async function act(action, args = {}) {
   if (busy || !session) return null;
   busy = true;
-  render();
   try {
     const resp = await call('act', { code: session.code, token: session.token, action, args });
     local = freshLocal();
@@ -594,7 +595,7 @@ const RING = '<svg class="countdown" viewBox="0 0 36 36" aria-hidden="true"><cir
 function slotHtml(p, e, mode) {
   const mine = p.id === view.you;
   const key = `slot:${p.id}:${e.slot}`;
-  const tap = mode && !e.empty && mode.can(mine, p, e) && !busy;
+  const tap = mode && !e.empty && mode.can(mine, p, e);
   const sel = mode && mode.selected && mode.selected(mine, e.slot);
   const rv = reveals.get(key);
   const pend = view.pending[0];
@@ -627,11 +628,11 @@ function seatHtml(p, pos, mode) {
   const holding = inPlay() && view.hasDrawn && view.turnId === p.id && !isMe;
   const held = holding
     ? `<div class="held-mini" data-key="held">${backHtml(ghosts.has(`held:${p.id}`) ? 'ghost' : '', `held:${p.id}`)}<small>drew</small></div>` : '';
-  return `<section class="seat pos-${pos}${isMe ? ' me' : ''}${active ? ' active' : ''}${p.connected ? '' : ' offline'}" data-key="seat:${esc(p.id)}" data-player="${esc(p.id)}" data-rot="${rot}" style="--seat: var(--seat-${seatIndex(p.id)})">
+  return `<section class="seat pos-${pos}${isMe ? ' me' : ''}${active ? ' active' : ''}${p.connected ? '' : ' offline'}" data-key="seat:${esc(p.id)}" data-player="${esc(p.id)}" data-rot="${rot}" style="--seat: var(--seat-${seatIndex(p.id)}); --n: ${p.hand.length}">
     <i class="ring" aria-hidden="true"></i>
     <div class="chip"><span class="dot" aria-hidden="true"></span><b class="name">${esc(p.name)}</b>${isMe ? '<span class="you">you</span>' : ''}
       <span class="count" aria-label="${n} cards">${n}</span>${badges}${isHost && !isMe ? kickHtml(p) : ''}</div>
-    <div class="hand" style="--n:${p.hand.length}">${p.hand.map((e) => slotHtml(p, e, mode)).join('')}</div>${held}
+    <div class="hand">${p.hand.map((e) => slotHtml(p, e, mode)).join('')}</div>${held}
   </section>`;
 }
 
@@ -667,9 +668,9 @@ function gameHtml() {
     ${drawn}</div></div>`;
 
   const btns = [];
-  const b = (act, label, cls = '') => `<button class="${cls}" data-act="${act}" data-key="b:${act}"${busy ? ' disabled' : ''}>${label}</button>`;
+  const b = (act, label, cls = '') => `<button class="${cls}" data-act="${act}" data-key="b:${act}">${label}</button>`;
   if (view.phase === 'setup') {
-    if (m && !m.ready) btns.push(`<button class="primary wide" data-act="peek" data-key="b:peek" ${local.peekSel.length === 2 && !busy ? '' : 'disabled'}>Peek <span class="tally">${local.peekSel.length}/2</span></button>`);
+    if (m && !m.ready) btns.push(`<button class="primary wide" data-act="peek" data-key="b:peek" ${local.peekSel.length === 2 ? '' : 'disabled'}>Peek <span class="tally">${local.peekSel.length}/2</span></button>`);
   } else {
     if (myTurn && !pend && !local.armed && !local.giving) {
       if (!view.hasDrawn) {
@@ -687,7 +688,7 @@ function gameHtml() {
     btns.push(`<button class="slapbtn${slapOn ? ' on' : ''}" data-act="slap" data-key="b:slap" aria-pressed="${slapOn ? 'true' : 'false'}">${slapOn ? 'Cancel slap' : 'Slap'}</button>`);
   }
 
-  const status = `<p class="hint${mode.slap ? ' slap' : mode.mine ? ' mine' : ''}" id="hint" data-key="hint" aria-live="polite">${mode.hint}</p>`;
+  const status = `<p class="hint${mode.slap ? ' slap' : mode.mine ? ' mine' : ''}" id="hint" data-key="hint" aria-live="polite"><span>${mode.hint}</span></p>`;
   return `<div class="screen game n${view.players.length}${local.armed || local.giving ? ' slapping' : ''}" data-key="game" style="--me: var(--seat-${seatIndex(view.you)})">${barHtml()}
     <div class="table" data-key="table">${seats}${center}</div>
     ${status}

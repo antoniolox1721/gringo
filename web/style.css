@@ -56,11 +56,11 @@ p { margin: 0 0 8px; }
 .screen {
   position: relative; min-height: 100vh; min-height: 100dvh; margin: 0 auto;
   padding: calc(var(--safe-t) + 6px) calc(var(--safe-r) + 12px) calc(var(--safe-b) + 12px) calc(var(--safe-l) + 12px);
-  animation: screen-in .34s ease-out both;
+  animation: screen-in .3s ease-out both;
 }
-@keyframes screen-in { from { opacity: 0; transform: translateY(10px); } }
+@keyframes screen-in { from { opacity: 0; } }
 /* Stitched rail: a dashed seam just inside the table edge. */
-.screen::before {
+#app::before {
   content: ""; position: fixed; pointer-events: none; border: 1.5px dashed var(--stitch); border-radius: 26px;
   inset: calc(var(--safe-t) + 4px) calc(var(--safe-r) + 4px) calc(var(--safe-b) + 4px) calc(var(--safe-l) + 4px);
 }
@@ -106,7 +106,7 @@ button.small { min-height: 44px; padding: 6px 14px; font-size: .88rem; border-ra
 
 /* ---- the game table ---- */
 .game {
-  --cw-me: clamp(46px, min(19vw, 10.6dvh), 104px);
+  --cw-me: clamp(46px, min(20.5vw, 11.4dvh), 108px);
   --cw-top: clamp(30px, min(11.5vw, 6.8dvh), 66px);
   --cw-side: clamp(28px, min(9.2vw, 5.8dvh), 54px);
   --cw-pile: clamp(52px, min(21vw, 12.6dvh), 124px);
@@ -117,21 +117,25 @@ button.small { min-height: 44px; padding: 6px 14px; font-size: .88rem; border-ra
 }
 .game > .bar { grid-area: bar; }
 .table {
-  grid-area: table; min-height: 0; display: grid; gap: 6px 8px;
+  grid-area: table; width: 100%; max-width: 940px; justify-self: center; min-height: 0; display: grid; gap: 6px 8px;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas: "left top right" "left center right";
+  grid-template-areas: "top top top" "left center right";
 }
+.game.n2 { --cw-top: clamp(30px, min(15vw, 7.6dvh), 76px); --cw-pile: clamp(52px, min(24vw, 13.6dvh), 132px); }
 .pos-top { grid-area: top; justify-self: center; max-width: 100%; }
 .pos-left { grid-area: left; align-self: center; }
 .pos-right { grid-area: right; align-self: center; }
 .pos-bottom { grid-area: me; justify-self: center; max-width: 100%; }
 
 .center { grid-area: center; position: relative; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; container-type: inline-size; }
+/* Deck and pile side by side; the card you drew sits just below them, nearest your hand. */
 .piles {
-  --cw: min(var(--cw-pile), calc(30cqw - 10px));
-  display: flex; align-items: flex-start; justify-content: center; gap: clamp(12px, 5cqw, 36px);
+  --cw: min(var(--cw-pile), calc(44cqw - 12px));
+  display: grid; grid-template-columns: auto auto; justify-content: center; align-items: start;
+  gap: 10px clamp(14px, 6cqw, 40px);
 }
+.piles .held { grid-column: 1 / -1; justify-self: center; --cw: min(var(--cw-me), calc(var(--cw-pile) * .82)); }
 .pile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .pile small { font-size: .8rem; color: var(--on-felt-muted); letter-spacing: .02em; white-space: nowrap; }
 .pile small b { color: var(--on-felt); font-variant-numeric: tabular-nums; }
@@ -220,9 +224,13 @@ button.small { min-height: 44px; padding: 6px 14px; font-size: .88rem; border-ra
 .pos-top .hand { --cw: min(var(--cw-top), calc((100vw - 60px) / var(--n) - 8px)); }
 .pos-bottom .hand { --cw: min(var(--cw-me), calc((min(100vw, 760px) - 40px) / var(--n) - 10px)); gap: 10px; padding-top: 6px; }
 .pos-bottom { padding-bottom: 2px; }
-.pos-left .hand, .pos-right .hand { --cw: min(var(--cw-side), calc(44dvh / var(--n) - 8px)); flex-direction: column; gap: 10px; }
-.pos-left .chip, .pos-right .chip { border-radius: 14px; max-width: calc(var(--cw-side) * 1.4 + 40px); padding: 4px 8px; }
-.pos-left .name, .pos-right .name { max-width: 5.6em; }
+.pos-left, .pos-right { --cw: min(var(--cw-side), calc(44dvh / var(--n) - 8px)); }
+.pos-left .hand, .pos-right .hand { flex-direction: column; gap: 10px; }
+.pos-left .slot::after, .pos-right .slot::after { inset: -5px -4px; }
+.pos-top .hand { gap: 10px; }
+.pos-top .slot::after { inset: -4px -5px; }
+.pos-left .chip, .pos-right .chip { border-radius: 14px; width: min-content; min-width: calc(var(--cw) * 1.4 + 12px); max-width: calc(var(--cw) * 1.4 + 30px); padding: 4px 6px; }
+.pos-left .name, .pos-right .name { flex: 1 1 calc(100% - 16px); max-width: calc(100% - 16px); text-align: left; }
 .held-mini { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 2px; --cw: var(--cw-top); z-index: 2; }
 .held-mini small { font-size: .7rem; color: var(--on-felt); background: var(--chip); padding: 1px 6px; border-radius: 6px; }
 .held-mini .card { rotate: 8deg; box-shadow: 0 0 0 2px var(--seat), 0 10px 18px -6px rgba(0, 0, 0, .7); }
@@ -338,7 +346,7 @@ button.small { min-height: 44px; padding: 6px 14px; font-size: .88rem; border-ra
 .callout-card b { font: italic 800 clamp(1.6rem, 7vw, 2.3rem)/1.1 var(--serif); color: #ffd27a; }
 .callout-card span { font-size: .95rem; }
 #toast {
-  position: fixed; left: 16px; right: 16px; top: calc(var(--safe-t) + 54px); z-index: 50; max-width: 440px; margin: 0 auto; padding: 11px 16px;
+  position: fixed; left: 16px; right: 16px; top: calc(var(--safe-t) + 4px); z-index: 50; max-width: 440px; margin: 0 auto; padding: 11px 16px;
   border-radius: 14px; background: #10201e; color: #f7f3e8; text-align: center; font-weight: 600; font-size: .95rem;
   box-shadow: 0 14px 30px -10px rgba(0, 0, 0, .7); border: 1px solid rgba(255, 255, 255, .1);
   opacity: 0; transform: translateY(-10px) scale(.98); pointer-events: none; transition: opacity .2s, transform .25s var(--settle);
@@ -451,23 +459,38 @@ input:focus-visible { outline: none; border-color: var(--focus); }
 @keyframes deal-flip { from { transform: perspective(700px) rotateY(90deg) translateY(-6px); opacity: .2; } 70% { transform: perspective(700px) rotateY(-8deg); opacity: 1; } }
 .again { width: 100%; }
 
-/* ---- landscape phones: hand on the left, hint and buttons on the right ---- */
+/* ---- landscape phones: the table on the left, the hint and buttons in a column on the right ---- */
 @media (orientation: landscape) and (max-height: 520px) {
   .game {
-    --cw-me: clamp(40px, 13dvh, 62px); --cw-top: clamp(28px, 9dvh, 44px); --cw-side: clamp(26px, 7.5dvh, 38px); --cw-pile: clamp(44px, 16dvh, 70px);
-    grid-template-columns: minmax(0, 1fr) minmax(220px, 36%);
-    grid-template-rows: auto minmax(0, 1fr) auto auto;
-    grid-template-areas: "bar bar" "table table" "me hint" "me act";
-    gap: 2px 12px;
+    --cw-me: clamp(36px, 12.5dvh, 60px); --cw-top: clamp(30px, 8.8dvh, 42px); --cw-side: clamp(26px, 7.2dvh, 36px); --cw-pile: clamp(40px, 14dvh, 66px);
+    grid-template-columns: minmax(0, 1fr) minmax(210px, 31%);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "bar bar" "table hint" "me act";
+    gap: 2px 14px;
   }
+  .game.n2 { --cw-top: clamp(30px, 9dvh, 44px); --cw-pile: clamp(40px, 14dvh, 66px); }
+  .table { grid-template-areas: "left top right" "left center right"; gap: 4px 8px; }
   .bar { min-height: 44px; }
-  .hint { min-height: 0; font-size: .88rem; padding: 4px 10px; }
-  .pos-bottom .hand { --cw: min(var(--cw-me), calc((60vw - 40px) / var(--n) - 10px)); }
-  .pos-left .hand, .pos-right .hand { --cw: min(var(--cw-side), calc(40dvh / var(--n) - 8px)); }
+  .hint { align-self: end; min-height: 0; font-size: .88rem; padding: 6px 10px; }
+  .actions { align-self: center; flex-wrap: wrap; }
+  .actions .slapbtn { flex: 1 1 0; }
+  .pos-bottom .hand { --cw: min(var(--cw-me), calc((64vw - 40px) / var(--n) - 10px)); padding-top: 2px; }
+  .pos-left, .pos-right { --cw: min(var(--cw-side), calc(58dvh / var(--n) - 10px)); }
+  .pos-left .chip, .pos-right .chip { min-height: 0; }
+  .piles { grid-template-columns: auto auto auto; gap: 6px 18px; }
+  .piles .held { grid-column: auto; }
+  .final {
+    position: fixed; top: calc(var(--safe-t) + 12px); max-width: 44vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding: 5px 10px;
+  }
   .hero { height: 110px; --cw: 56px; }
   .fan-card { margin-left: -28px; }
 }
 @media (min-width: 900px) {
+  .end { max-width: 920px; }
+  .end .placard { width: 100%; max-width: 560px; align-self: center; }
+  .results { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .again { max-width: 560px; align-self: center; }
   .game { --cw-top: clamp(30px, min(11.5vw, 7.6dvh), 70px); --cw-side: clamp(28px, 6.4dvh, 58px); gap: 8px; }
   .table { gap: 10px 32px; }
   .hint { font-size: 1rem; }

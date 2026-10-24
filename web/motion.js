@@ -98,12 +98,13 @@ export function fly({ from, to, face, back, flip = null, delay = 0, onLand }) {
 }
 
 // Half-turn used for flips in place: the old face turns away, the caller swaps content, the new face turns in.
+// Returns the animation (or null); the caller cancels it once the new face is in place.
 export function turnAway(el, ms = 130) {
-  if (!el || reduced()) return Promise.resolve();
+  if (!el || reduced()) return null;
   return el.animate([
     { transform: 'perspective(700px) rotateY(0deg)' },
     { transform: 'perspective(700px) rotateY(90deg)' },
-  ], { duration: ms, easing: 'cubic-bezier(.55, 0, 1, .45)', fill: 'forwards' }).finished.catch(() => {});
+  ], { duration: ms, easing: 'cubic-bezier(.55, 0, 1, .45)', fill: 'forwards' });
 }
 
 export function turnIn(el, ms = 240) {
