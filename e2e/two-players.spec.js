@@ -22,6 +22,10 @@ async function noHScroll(page) {
   expect(w.sw, 'horizontal scroll').toBeLessThanOrEqual(w.cw);
 }
 
+const GLYPH = { S: '♠', H: '♥', D: '♦', C: '♣' };
+// Faces of the host's peeked slots 0 and 1 as the UI prints them, e.g. '5♠'.
+const hostFaces = (cards) => cards.hands[0].slice(0, 2).map((c) => `${c.slice(0, -1)}${GLYPH[c.slice(-1)]}`);
+
 const slot = (page, ownerId, n) => page.locator(`.slot[data-owner="${ownerId}"][data-slot="${n}"]`);
 
 async function stack(request, code, body) {
@@ -52,7 +56,18 @@ async function setupGame(browser, baseURL, request, errors, cards) {
     await slot(p, s.playerId, 0).click();
     await slot(p, s.playerId, 1).click();
     await p.click('[data-act=peek]');
+    // The peeked faces show briefly (sanity: later "no face" assertions are not vacuous)...
+    await expect(p.locator(`.slot[data-owner="${s.playerId}"] .face`)).toHaveCount(2);
   }
+  // ...then turn face down after about 3 s and never come back from the view.
+  for (const p of [host.page, guest.page]) {
+    await expect(p.locator('.slot .face')).toHaveCount(0, { timeout: 6000 });
+  }
+  const hostHtml = await host.page.content();
+  for (const f of hostFaces(cards)) expect(hostHtml, `host still shows ${f} after the peek`).not.toContain(f);
+  await host.page.reload();
+  await expect(host.page.locator('.slot[data-owner]')).toHaveCount(8);
+  await expect(host.page.locator('.slot .face')).toHaveCount(0);
   await expect(host.page.locator('#hint')).toContainText('Your turn');
   await expect(guest.page.locator('#hint')).toContainText("Hanna's turn");
   return { host, guest, hs, gs, code };
@@ -79,8 +94,6 @@ test('full game: wrong slap grows hand, gringo, final round, result, hidden info
     expect(JSON.stringify(v)).not.toMatch(/"uid":(1004|1005|1006|1007)\b/);
   }
   await assertHostBlind();
-  // The guest sees their own peeked cards (sanity: the assertion above is not vacuous).
-  await expect(guest.page.locator(`.slot[data-owner="${gs.playerId}"] .face`)).toHaveCount(2);
 
   // Host draws 4C and discards it.
   await host.page.click('[data-act=draw]');

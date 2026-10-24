@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect x="9" y="4" width="40" height="56" rx="6" fill="#24308a" stroke="#fdfbf5" stroke-width="4" transform="rotate(-10 29 32)"/>
+  <rect x="17" y="6" width="40" height="56" rx="6" fill="#fdfbf5" stroke="#142220" stroke-width="1.5" transform="rotate(8 37 34)"/>
+  <text x="38" y="45" text-anchor="middle" font-family="Georgia, serif" font-weight="800" font-size="30" fill="#c4202f" transform="rotate(8 37 34)">G</text>
+</svg>
