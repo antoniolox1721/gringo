@@ -232,6 +232,15 @@ function planFlights(p, v) {
       const e = emptied.shift();
       out.push({ from: `slot:${e.pid}:${e.slot}`, to: 'pile', face: cardHtml(top), flip: 'up', impact: true });
     }
+  } else if (topMoved && p.turnId) {
+    // The draw happened between two fetches: replay it as deck -> (their slot ->) pile.
+    const k = changed.findIndex((c) => c.pid === p.turnId);
+    if (k >= 0) {
+      const to = `slot:${p.turnId}:${changed.splice(k, 1)[0].slot}`;
+      out.push({ from: 'deck', to, sound: 'land' }, { from: to, to: 'pile', face: cardHtml(top), flip: 'up', delay: 90 });
+    } else {
+      out.push({ from: 'deck', to: 'pile', face: cardHtml(top), flip: 'up', sound: 'land' });
+    }
   }
   if (v.hasDrawn && !(p.hasDrawn && p.turnId === v.turnId)) {
     const mine = v.turnId === v.you && v.drawn;

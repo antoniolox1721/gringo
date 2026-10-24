@@ -241,7 +241,7 @@ button.small { min-height: 44px; padding: 6px 14px; font-size: .88rem; border-ra
 .pos-left .slot::after, .pos-right .slot::after { inset: -5px -4px; }
 .pos-top .hand { gap: 10px; }
 .pos-top .slot::after { inset: -4px -5px; }
-.pos-left .chip, .pos-right .chip { border-radius: 14px; width: max(calc(var(--cw) * 1.4 + 16px), 92px); padding: 5px 7px; gap: 3px 5px; }
+.pos-left .chip, .pos-right .chip { border-radius: 14px; width: max(calc(var(--cw) * 1.4 + 16px), 80px); padding: 5px 6px; gap: 3px 5px; }
 .pos-left .name, .pos-right .name {
   flex: 1 1 calc(100% - 16px); max-width: calc(100% - 16px); text-align: left; font-size: .72rem; line-height: 1.15;
   white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
