@@ -260,7 +260,7 @@ button.small { min-height: 44px; padding: 6px 14px; font-size: .88rem; border-ra
 .slot.sel .card, .slot.tap:hover .card { translate: 0 calc(var(--cw) * -.14); }
 .slot.sel::before, .slot.tap:hover::before { opacity: 1; }
 .slot.sel .card { box-shadow: 0 0 0 3px var(--me), 0 0 18px color-mix(in srgb, var(--me) 60%, transparent), var(--rest); }
-.slot:focus-visible { outline: 3px solid var(--focus); outline-offset: 5px; }
+.slot:focus-visible { outline: 3px dashed var(--on-felt); outline-offset: 6px; }
 .pos-left .slot, .pos-right .slot { width: calc(var(--cw) * 1.4); height: var(--cw); }
 .pos-left .slot .card, .pos-right .slot .card {
   position: absolute; left: 50%; top: 50%; margin: calc(var(--cw) * -.7) 0 0 calc(var(--cw) * -.5);

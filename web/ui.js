@@ -141,11 +141,11 @@ async function refresh() {
   } finally { fetching = false; }
 }
 
-function applyView(v, ctx = {}) {
+function applyView(v) {
   if (!v) return;
   if (view && v.version < view.version) return; // stale response
   const prev = view;
-  if (prev && v.version === prev.version && !ctx.force) { view = v; render(); return; }
+  if (prev && v.version === prev.version) { view = v; render(); return; }
   view = v;
   if (!prev) { render(); return; }
 
@@ -160,7 +160,8 @@ function applyView(v, ctx = {}) {
   } else if (plan.some((f) => f.to === 'pile')) {
     pileHold = { card: null, claimed: false };
   }
-  if (local.armed && v.discardTop && cardId(v.discardTop) !== cardId(prev.discardTop) && v.discardClaimed) local.armed = false;
+  // A new top card changes what matches: drop an armed slap rather than risk a penalty on a stale target.
+  if ((local.armed || local.giving) && cardId(v.discardTop) !== cardId(prev.discardTop)) local = { ...local, armed: false, giving: null };
   render();
   motion.flipFrom($app, '[data-flip]', flipBefore);
   launch(plan, from);
