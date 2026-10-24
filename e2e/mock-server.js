@@ -1,0 +1,179 @@
+// Dependency-free local stand-in for the Supabase backend: serves web/ and implements
+// /functions/v1/room and /functions/v1/act in memory with the real engine.
+import http from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { randomUUID, randomInt } from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import * as engine from '../supabase/functions/_shared/engine.js';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const WEB = path.resolve(here, '..', 'web');
+const PORT = Number(process.env.PORT) || 8787;
+
+const rooms = new Map(); // code -> { state, tokens: Map(token -> playerId) }
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
+};
+
+class HttpError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+function newCode() {
+  for (;;) {
+    let c = '';
+    for (let i = 0; i < 4; i++) c += String.fromCharCode(65 + randomInt(26));
+    if (!rooms.has(c)) return c;
+  }
+}
+
+function roomOf(code) {
+  const room = rooms.get(String(code || '').toUpperCase());
+  if (!room) throw new HttpError(400, 'unknown room');
+  return room;
+}
+
+function auth(room, token) {
+  const id = room.tokens.get(token);
+  if (!id) throw new HttpError(403, 'bad token');
+  return id;
+}
+
+function cleanName(name) {
+  const n = String(name ?? '').trim().slice(0, 16);
+  if (!n) throw new HttpError(400, 'name required');
+  return n;
+}
+
+function wrap(fn) {
+  try { return fn(); } catch (e) {
+    if (e instanceof HttpError) throw e;
+    throw new HttpError(400, e.message);
+  }
+}
+
+function roomEndpoint(body) {
+  switch (body.action) {
+    case 'create': {
+      const name = cleanName(body.name);
+      const code = newCode();
+      const playerId = randomUUID();
+      const token = randomUUID();
+      rooms.set(code, { state: engine.createGame(playerId, name), tokens: new Map([[token, playerId]]) });
+      return { code, playerId, token };
+    }
+    case 'join': {
+      const room = roomOf(body.code);
+      const name = cleanName(body.name);
+      const playerId = randomUUID();
+      const token = randomUUID();
+      room.state = wrap(() => engine.addPlayer(room.state, playerId, name));
+      room.tokens.set(token, playerId);
+      return { playerId, token };
+    }
+    case 'start': {
+      const room = roomOf(body.code);
+      const id = auth(room, body.token);
+      room.state = wrap(() => engine.startGame(room.state, id));
+      return { ok: true };
+    }
+    case 'kick': {
+      const room = roomOf(body.code);
+      const id = auth(room, body.token);
+      if (id !== room.state.hostId) throw new HttpError(400, 'only the host can kick');
+      if (body.targetId === id) throw new HttpError(400, 'cannot kick yourself');
+      room.state = wrap(() => engine.removePlayer(room.state, body.targetId));
+      for (const [t, pid] of room.tokens) if (pid === body.targetId && room.state.phase === 'lobby') room.tokens.delete(t);
+      return { ok: true };
+    }
+    case 'view': {
+      const room = roomOf(body.code);
+      const id = auth(room, body.token);
+      return { view: engine.viewFor(room.state, id) };
+    }
+    default:
+      throw new HttpError(400, 'unknown action');
+  }
+}
+
+function actEndpoint(body) {
+  const room = roomOf(body.code);
+  const id = auth(room, body.token);
+  const a = body.args || {};
+  const s = room.state;
+  let next;
+  let extra = {};
+  wrap(() => {
+    switch (body.action) {
+      case 'peekSetup': { const r = engine.peekSetup(s, id, a.slots); next = r.state; extra = { seen: r.seen }; break; }
+      case 'draw': next = engine.draw(s, id).state; break;
+      case 'keep': next = engine.keep(s, id, a.slot); break;
+      case 'discard': next = engine.discardDrawn(s, id); break;
+      case 'power': {
+        const type = a.type;
+        if (!['J', 'Q', 'K'].includes(type)) throw new Error('invalid power type');
+        const r = engine.usePower(s, id, { type, ...(a[type] || {}) });
+        next = r.state;
+        if (r.seen !== undefined) extra = { seen: r.seen };
+        break;
+      }
+      case 'confirmKing': next = engine.confirmKing(s, id, a.swapWithSlot ?? null); break;
+      case 'skipPower': next = engine.skipPower(s, id); break;
+      case 'slap': { const r = engine.slap(s, id, a); next = r.state; extra = { ok: r.ok }; break; }
+      case 'gringo': next = engine.callGringo(s, id); break;
+      case 'rps': next = engine.submitRps(s, id, a.pick); break;
+      default: throw new Error('unknown action');
+    }
+  });
+  room.state = next;
+  return { view: engine.viewFor(next, id), ...extra };
+}
+
+async function readJson(req) {
+  let raw = '';
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > 1e6) throw new HttpError(400, 'body too large');
+  }
+  try { return raw ? JSON.parse(raw) : {}; } catch { throw new HttpError(400, 'invalid JSON'); }
+}
+
+function send(res, status, obj) {
+  res.writeHead(status, { 'content-type': 'application/json', ...CORS });
+  res.end(JSON.stringify(obj));
+}
+
+const CORS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-headers': '*',
+  'access-control-allow-methods': 'POST, GET, OPTIONS',
+};
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://localhost');
+  try {
+    if (req.method === 'OPTIONS') { res.writeHead(204, CORS); res.end(); return; }
+    if (url.pathname === '/functions/v1/room' || url.pathname === '/functions/v1/act') {
+      if (req.method !== 'POST') throw new HttpError(400, 'POST only');
+      const body = await readJson(req);
+      send(res, 200, url.pathname.endsWith('/room') ? roomEndpoint(body) : actEndpoint(body));
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(400, 'bad method');
+    let rel = decodeURIComponent(url.pathname);
+    if (rel.endsWith('/')) rel += 'index.html';
+    const file = path.resolve(WEB, '.' + rel);
+    if (file !== WEB && !file.startsWith(WEB + path.sep)) throw new HttpError(403, 'forbidden');
+    let data;
+    try { data = await readFile(file); } catch { res.writeHead(404, CORS); res.end('not found'); return; }
+    res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', 'cache-control': 'no-store', ...CORS });
+    res.end(req.method === 'HEAD' ? undefined : data);
+  } catch (e) {
+    send(res, e.status || 500, { error: e.message });
+  }
+});
+
+server.listen(PORT, () => console.log(`mock server on http://localhost:${PORT}`));
