@@ -433,6 +433,7 @@ function leave(msg = '') {
   motion.finishAll();
   session = null;
   view = null;
+  failures = 0;
   reveals.clear();
   ghosts.clear();
   pileHold = null;
@@ -471,18 +472,18 @@ const SOUND_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l
   '<path class="waves" d="M16 9.5a3.5 3.5 0 0 1 0 5M18.5 7a7 7 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>' +
   '<path class="mute" d="M16.5 9.5l5 5m0-5l-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 
-function barHtml() {
+function barHtml(brand = true) {
   const net = failures >= 2
-    ? '<span class="net" role="status">Connection lost. Reconnecting…</span>' : '';
+    ? '<span class="net" role="status" aria-label="Connection lost. Reconnecting…" title="Connection lost. Reconnecting…">Reconnecting…</span>' : '';
   const room = session ? `<span class="room" title="Room code">Room <b>${esc(session.code)}</b></span>` : '';
   const on = soundOn();
-  return `<header class="bar" data-key="bar"><span class="brand">Gringo</span>${room}${net}
+  return `<header class="bar" data-key="bar">${brand ? '<span class="brand">Gringo</span>' : ''}${room}${net}
     <button class="icon sound${on ? ' on' : ''}" data-act="sound" aria-pressed="${on}" aria-label="Sound effects" title="Sound ${on ? 'on' : 'off'}">${SOUND_ICON}</button></header>`;
 }
 
 function homeHtml() {
   const fan = [{ rank: 'K', suit: 'H' }, { rank: '7', suit: 'S' }, { rank: 'A', suit: 'D' }, { rank: 'Q', suit: 'C' }];
-  return `<div class="screen home" data-key="home">${barHtml()}
+  return `<div class="screen home" data-key="home">${barHtml(false)}
     <div class="hero" aria-hidden="true">${fan.map((c, i) => `<div class="fan-card" style="--i:${i}">${cardHtml(c)}</div>`).join('')}</div>
     <h1 class="title">Gringo</h1>
     <p class="lede">A memory card game for 2 to 4 players. Remember your cards, slap matches, lowest hand wins.</p>

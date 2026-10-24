@@ -3,8 +3,7 @@
 const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
 export const reduced = () => mq.matches;
 
-export const TRAVEL = 'cubic-bezier(.45, 0, .25, 1)';
-export const SETTLE = 'cubic-bezier(.34, 1.56, .64, 1)';
+const TRAVEL = 'cubic-bezier(.45, 0, .25, 1)';
 
 let layer = null;
 function flightLayer() {
@@ -24,8 +23,6 @@ const live = new Set();
 export function finishAll() {
   for (const f of Array.from(live)) f.end(true);
 }
-
-export const busy = () => live.size > 0;
 
 // from/to: { x, y, w, rot } with x/y the centre in viewport px and w the upright card width.
 // face/back: card markup. flip 'up' turns back -> face mid-air, 'down' face -> back.
@@ -139,14 +136,6 @@ export function pulse(el) {
     { transform: 'scale(.92)', opacity: 0 }, { offset: 0.35, transform: 'scale(1.06)', opacity: 1 },
     { transform: 'scale(1)', opacity: 1 },
   ], { duration: 420, easing: 'ease-out' });
-}
-
-export function settle(el, delay = 0) {
-  if (!el || reduced()) return;
-  el.animate([
-    { transform: 'translateY(10px) scale(.96)', opacity: 0 },
-    { transform: 'translateY(0) scale(1)', opacity: 1 },
-  ], { duration: 320, delay, easing: SETTLE, fill: 'backwards' });
 }
 
 // FLIP: records boxes before a DOM update, then slides moved elements from their old place.
