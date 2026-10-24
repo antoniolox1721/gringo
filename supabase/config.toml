@@ -1,0 +1,7 @@
+project_id = "gringo"
+
+[functions.room]
+verify_jwt = false
+
+[functions.act]
+verify_jwt = false
