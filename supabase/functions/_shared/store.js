@@ -57,6 +57,7 @@ export async function broadcast(code, version, env = defaultEnv(), fetchImpl = g
   try {
     const res = await fetchImpl(`${env.url}/realtime/v1/api/broadcast`, {
       method: 'POST',
+      signal: AbortSignal.timeout(3000),
       headers: { 'content-type': 'application/json', apikey: env.key, authorization: `Bearer ${env.key}` },
       body: JSON.stringify({
         messages: [{ topic: `game:${code}`, event: 'changed', payload: { version }, private: false }],

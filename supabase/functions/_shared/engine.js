@@ -15,7 +15,14 @@ export function buildDeck() {
   return cards;
 }
 
-export function shuffle(cards, rng = Math.random) {
+// Uniform [0, 1) from the platform CSPRNG: 21 + 32 = 53 random bits, so every double is reachable.
+export function secureRandom() {
+  const w = new Uint32Array(2);
+  globalThis.crypto.getRandomValues(w);
+  return ((w[0] >>> 11) * 4294967296 + w[1]) / 9007199254740992;
+}
+
+export function shuffle(cards, rng = secureRandom) {
   const out = cards.slice();
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
@@ -63,6 +70,13 @@ function produce(state, fn) {
 function playerOf(s, id) {
   const p = s.players.find((x) => x.id === id);
   if (!p) throw new Error('unknown player');
+  return p;
+}
+
+// Looks up the acting player; kicked/offline players may not act.
+function requireActive(s, id) {
+  const p = playerOf(s, id);
+  if (p.connected === false) throw new Error('player is not in the game');
   return p;
 }
 
@@ -128,7 +142,7 @@ export function addPlayer(state, id, name) {
   });
 }
 
-export function startGame(state, byId, rng = Math.random) {
+export function startGame(state, byId, rng = secureRandom) {
   if (state.phase !== 'lobby') throw new Error('already started');
   if (byId !== state.hostId) throw new Error('only the host can start');
   if (state.players.length < 2) throw new Error('need at least 2 players');
@@ -143,6 +157,7 @@ export function startGame(state, byId, rng = Math.random) {
 }
 
 export function peekSetup(state, id, slots) {
+  requireActive(state, id);
   if (state.phase !== 'setup') throw new Error('not in setup');
   const me = playerOf(state, id);
   if (me.seenSlots.length > 0) throw new Error('already peeked');
@@ -294,7 +309,8 @@ function advanceTurn(s) {
   }
 }
 
-export function draw(state, id, rng = Math.random) {
+export function draw(state, id, rng = secureRandom) {
+  requireActive(state, id);
   requireTurn(state, id);
   if (state.pending.length > 0) throw new Error('resolve pending powers first');
   if (state.drawn !== null) throw new Error('already drawn');
@@ -309,6 +325,7 @@ export function draw(state, id, rng = Math.random) {
 }
 
 export function keep(state, id, slot) {
+  requireActive(state, id);
   requireTurn(state, id);
   if (state.drawn === null) throw new Error('draw first');
   const me = playerOf(state, id);
@@ -328,6 +345,7 @@ export function keep(state, id, slot) {
 }
 
 export function discardDrawn(state, id) {
+  requireActive(state, id);
   requireTurn(state, id);
   if (state.drawn === null) throw new Error('draw first');
   return produce(state, (s) => {
@@ -413,6 +431,7 @@ function swapCards(s, a, aSlot, b, bSlot) {
 }
 
 export function usePower(state, id, args) {
+  requireActive(state, id);
   const pend = requirePending(state, id);
   if (!args || args.type !== pend.type) throw new Error(`pending ${pend.type} power`);
   if (pend.target) throw new Error('confirm the king first');
@@ -446,6 +465,7 @@ export function usePower(state, id, args) {
 }
 
 export function confirmKing(state, id, swapWithSlot) {
+  requireActive(state, id);
   const pend = requirePending(state, id);
   if (pend.type !== 'K' || !pend.target) throw new Error('no king reveal to confirm');
   return produce(state, (s) => {
@@ -463,6 +483,7 @@ export function confirmKing(state, id, swapWithSlot) {
 }
 
 export function skipPower(state, id) {
+  requireActive(state, id);
   requirePending(state, id);
   return produce(state, (s) => {
     clearView(playerOf(s, id));
@@ -470,7 +491,8 @@ export function skipPower(state, id) {
   });
 }
 
-export function slap(state, id, args, rng = Math.random) {
+export function slap(state, id, args, rng = secureRandom) {
+  requireActive(state, id);
   if (state.phase !== 'turns' && state.phase !== 'final') throw new Error('game is not in play');
   const me = playerOf(state, id);
   const owner = playerOf(state, args.ownerId);
@@ -540,6 +562,7 @@ export function checkZero(state, id) {
 }
 
 export function callGringo(state, id) {
+  requireActive(state, id);
   requireTurn(state, id);
   if (state.phase !== 'turns' || state.endedBy) throw new Error('the final round has started');
   if (state.drawn !== null || state.acted) throw new Error('gringo is only allowed before drawing');
@@ -614,6 +637,7 @@ function dropFromRps(s, id) {
 }
 
 export function submitRps(state, id, pick) {
+  requireActive(state, id);
   if (state.phase !== 'rps') throw new Error('no rps tiebreak in progress');
   if (!Object.hasOwn(BEATS, pick)) throw new Error('pick must be r, p or s');
   if (!state.rps.players.includes(id)) throw new Error('you are not in the tiebreak');

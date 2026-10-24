@@ -3,7 +3,7 @@ import { HttpError, applyWithRetry, broadcast, hashToken, loadGame, playerIdForT
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-function randomCode(rng = Math.random) {
+function randomCode(rng = engine.secureRandom) {
   let code = '';
   for (let i = 0; i < 4; i++) code += LETTERS[Math.floor(rng() * 26)];
   return code;
@@ -43,7 +43,7 @@ async function runEngine(fn) {
 const ok = (body) => ({ status: 200, body });
 
 export async function handleRoom(db, body, deps = {}) {
-  const { notify = broadcast, uuid = () => crypto.randomUUID(), rng = Math.random } = deps;
+  const { notify = broadcast, uuid = () => crypto.randomUUID(), rng = engine.secureRandom } = deps;
   return guarded(async () => {
     const action = body && body.action;
     if (action === 'create') {

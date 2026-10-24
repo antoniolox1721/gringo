@@ -192,3 +192,40 @@ test('broadcast posts the changed event to the realtime REST endpoint', async ()
   assert.equal(await broadcast('ABCD', 7, {}, fetchImpl), false);
   assert.equal(await broadcast('ABCD', 7, { url: 'u', key: 'k' }, async () => { throw new Error('net'); }), false);
 });
+
+test('broadcast carries a timeout signal so a hung realtime call cannot stall a request', async () => {
+  let init;
+  await broadcast('ABCD', 1, { url: 'u', key: 'k' }, async (_u, i) => { init = i; return { ok: true }; });
+  assert.ok(init.signal instanceof AbortSignal);
+});
+
+test('a player flagged offline gets 400 even with a valid token', async () => {
+  const db = fakeDb();
+  const s = slapState();
+  s.players[1].connected = false;
+  await seed(db, s, { a: 'ta', b: 'tb' });
+  const r = await handleAct(db, { code: 'ABCD', token: 'tb', action: 'slap', args: { ownerId: 'a', slot: 0 } }, quiet);
+  assert.deepEqual(r, { status: 400, body: { error: 'player is not in the game' } });
+});
+
+test('responses never contain other players\' hidden cards, token hashes or raw tokens', async () => {
+  const db = fakeDb();
+  const s = slapState();
+  s.deck = [c('K', 'H'), c('8', 'H')];
+  await seed(db, s, { a: 'ta', b: 'tb' });
+  const drawn = await handleAct(db, { code: 'ABCD', token: 'ta', action: 'draw', args: {} }, quiet);
+  const other = await handleRoom(db, { action: 'view', code: 'ABCD', token: 'tb' }, quiet);
+  const hashes = Object.values(db.rows.get('ABCD').tokens);
+  for (const r of [drawn, other]) {
+    const text = JSON.stringify(r.body);
+    for (const h of hashes) assert.ok(!text.includes(h));
+    assert.ok(!text.includes('tokens'));
+  }
+  // b must not see a's hand, nor a's drawn card, nor the deck order.
+  const text = JSON.stringify(other.body);
+  assert.equal(other.body.view.drawn, null);
+  assert.ok(!text.includes('"uid"') || other.body.view.players.every((p) => p.hand.every((h) => !h.card)));
+  assert.equal(other.body.view.players[0].hand.some((h) => h.card), false);
+  assert.equal(other.body.view.players[1].hand.some((h) => h.card), false);
+  assert.equal(JSON.stringify(other.body).includes('"deck"'), false);
+});
