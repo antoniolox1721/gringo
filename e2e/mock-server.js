@@ -11,6 +11,20 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.resolve(here, '..', 'web');
 const PORT = Number(process.env.PORT) || 8787;
 
+// MOCK_SEED makes shuffles reproducible (tiny mulberry32); unset keeps the engine's CSPRNG.
+function seededRng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const RNG = process.env.MOCK_SEED !== undefined && process.env.MOCK_SEED !== '' ? seededRng(Number(process.env.MOCK_SEED)) : undefined;
+const TEST_MODE = process.env.MOCK_TEST === '1';
+
 const rooms = new Map(); // code -> { state, tokens: Map(token -> playerId) }
 
 const MIME = {
@@ -77,7 +91,7 @@ function roomEndpoint(body) {
     case 'start': {
       const room = roomOf(body.code);
       const id = auth(room, body.token);
-      room.state = wrap(() => engine.startGame(room.state, id));
+      room.state = wrap(() => engine.startGame(room.state, id, RNG));
       return { ok: true };
     }
     case 'kick': {
@@ -109,7 +123,7 @@ function actEndpoint(body) {
   wrap(() => {
     switch (body.action) {
       case 'peekSetup': { const r = engine.peekSetup(s, id, a.slots); next = r.state; extra = { seen: r.seen }; break; }
-      case 'draw': next = engine.draw(s, id).state; break;
+      case 'draw': next = engine.draw(s, id, RNG).state; break;
       case 'keep': next = engine.keep(s, id, a.slot); break;
       case 'discard': next = engine.discardDrawn(s, id); break;
       case 'power': {
@@ -122,7 +136,7 @@ function actEndpoint(body) {
       }
       case 'confirmKing': next = engine.confirmKing(s, id, a.swapWithSlot ?? null); break;
       case 'skipPower': next = engine.skipPower(s, id); break;
-      case 'slap': { const r = engine.slap(s, id, a); next = r.state; extra = { ok: r.ok }; break; }
+      case 'slap': { const r = engine.slap(s, id, a, RNG); next = r.state; extra = { ok: r.ok }; break; }
       case 'gringo': next = engine.callGringo(s, id); break;
       case 'rps': next = engine.submitRps(s, id, a.pick); break;
       default: throw new Error('unknown action');
@@ -130,6 +144,24 @@ function actEndpoint(body) {
   });
   room.state = next;
   return { view: engine.viewFor(next, id), ...extra };
+}
+
+// Test-only (MOCK_TEST=1): overwrite hands/discard/deck with named cards, e.g. '9S', '10H', 'JOKER'.
+function stackEndpoint(body) {
+  const room = roomOf(body.code);
+  let uid = 1000;
+  const card = (name) => {
+    const str = String(name);
+    if (str === 'JOKER') return { rank: 'JOKER', suit: null, uid: uid++ };
+    return { rank: str.slice(0, -1), suit: str.slice(-1), uid: uid++ };
+  };
+  const s = structuredClone(room.state);
+  if (body.hands) for (const [i, cards] of Object.entries(body.hands)) s.players[Number(i)].hand = cards.map(card);
+  if (body.discard) s.discard = body.discard.map(card);
+  if (body.deck) s.deck = body.deck.map(card);
+  s.version += 1;
+  room.state = s;
+  return { ok: true };
 }
 
 async function readJson(req) {
@@ -160,6 +192,10 @@ const server = http.createServer(async (req, res) => {
       if (req.method !== 'POST') throw new HttpError(400, 'POST only');
       const body = await readJson(req);
       send(res, 200, url.pathname.endsWith('/room') ? roomEndpoint(body) : actEndpoint(body));
+      return;
+    }
+    if (TEST_MODE && url.pathname === '/__test/stack' && req.method === 'POST') {
+      send(res, 200, stackEndpoint(await readJson(req)));
       return;
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(400, 'bad method');
