@@ -318,6 +318,7 @@ function powerBurst(rank) {
 const POWER_TEXT = { J: 'a Jack: blind swap', Q: 'a Queen: look at any card', K: 'a King: look at two cards, then swap or not' };
 function announce(p, v) {
   const parts = [];
+  if (v.phase === 'done' && p.phase !== 'done') blip(v.result && v.result.winners.includes(v.you) ? 'win' : 'lose');
   if (atTable() || v.phase === 'done' || v.phase === 'rps') {
     for (const np of v.players) {
       const op = p.players.find((x) => x.id === np.id);
