@@ -57,10 +57,11 @@ export function fakeDb() {
       rows.set(row.code, structuredClone(row));
       return true;
     },
-    async touch(code, seen) {
+    // Same merge as the touch_seen SQL function: defaults first, then what is stored, then the caller.
+    async touch(code, missing, caller) {
       await tick();
       const row = rows.get(code);
-      if (row) rows.set(code, { ...row, seen: structuredClone(seen) });
+      if (row) rows.set(code, { ...row, seen: { ...missing, ...(row.seen || {}), ...caller } });
     },
     async purge(olderThanIso) {
       await tick();

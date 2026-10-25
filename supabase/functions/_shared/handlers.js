@@ -86,9 +86,11 @@ export async function handleRoom(db, body, deps = {}) {
       const id = await playerIdForToken(tokens, body.token);
       const t = now();
       // Every poll is a heartbeat. A closing tab says bye and keeps only a short grace period.
-      const next = { ...seen, [id]: body.bye === true ? t - (engine.PRESENCE.staleMs - engine.PRESENCE.byeGraceMs) : t };
-      for (const p of state.players) if (next[p.id] === undefined) next[p.id] = t;
-      if (db.touch) await db.touch(code, next);
+      const mine = body.bye === true ? t - (engine.PRESENCE.staleMs - engine.PRESENCE.byeGraceMs) : t;
+      const missing = {};
+      for (const p of state.players) if (seen[p.id] === undefined) missing[p.id] = t;
+      if (db.touch) await db.touch(code, missing, { [id]: mine });
+      const next = { ...missing, ...seen, [id]: mine };
       const absent = state.players
         .filter((p) => p.connected && p.id !== id && t - next[p.id] > engine.PRESENCE.staleMs)
         .map((p) => p.id);

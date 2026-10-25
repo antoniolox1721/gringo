@@ -204,3 +204,17 @@ test('creating a room purges rooms untouched for a day', async () => {
   assert.equal(db.rows.has('OLDD'), false);
   assert.equal(db.rows.has('NEWW'), true);
 });
+
+test('a player who never polled still goes stale, and concurrent polls keep each other\'s heartbeats', async () => {
+  const db = await room(stacked(3));
+  const now = clock();
+  await Promise.all([poll(db, 'p0', now), poll(db, 'p1', now)]);
+  const seen = db.rows.get('ABCD').seen;
+  assert.deepEqual(Object.keys(seen).sort(), ['p0', 'p1', 'p2']);
+  now.advance(staleMs - 5000);
+  await Promise.all([poll(db, 'p0', now), poll(db, 'p1', now)]);
+  now.advance(6000);
+  const r = await poll(db, 'p0', now);
+  assert.equal(r.body.view.phase, 'done');
+  assert.deepEqual(r.body.view.abandonedBy, ['p2'], 'only the player who never polled is gone');
+});

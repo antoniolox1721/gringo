@@ -1,5 +1,5 @@
 // Storage helpers shared by the Edge Functions and the node tests.
-// `db` is any object with get(code), insert(row), update(code, expectedVersion, patch), touch(code, seen)
+// `db` is any object with get(code), insert(row), update(code, expectedVersion, patch), touch(code, missing, caller)
 // and purge(olderThanIso);
 // supabaseDb(client) adapts a supabase-js client to that interface.
 
@@ -93,12 +93,10 @@ export function supabaseDb(client) {
       if (error.code === '23505') return false;
       throw new Error(error.message);
     },
-    // Presence only: no version bump, so heartbeats never wake the other clients.
-    async touch(code, seen) {
-      const { error } = await client
-        .from('games')
-        .update({ seen, updated_at: new Date().toISOString() })
-        .eq('code', code);
+    // Presence only: no version bump, so heartbeats never wake the other clients. One atomic SQL
+    // statement merges the caller's entry, so concurrent polls cannot overwrite each other.
+    async touch(code, missing, caller) {
+      const { error } = await client.rpc('touch_seen', { p_code: code, p_missing: missing, p_caller: caller });
       if (error) throw new Error(error.message);
     },
     async purge(olderThanIso) {
