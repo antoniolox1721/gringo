@@ -1,5 +1,6 @@
 // Storage helpers shared by the Edge Functions and the node tests.
-// `db` is any object with get(code), insert(row) and update(code, expectedVersion, patch);
+// `db` is any object with get(code), insert(row), update(code, expectedVersion, patch), touch(code, seen)
+// and purge(olderThanIso);
 // supabaseDb(client) adapts a supabase-js client to that interface.
 
 export class HttpError extends Error {
@@ -18,7 +19,7 @@ export async function hashToken(token, cryptoImpl = globalThis.crypto) {
 export async function loadGame(db, code) {
   const row = await db.get(code);
   if (!row) throw new HttpError(404, 'room not found');
-  return { state: row.state, tokens: row.tokens, version: row.version };
+  return { state: row.state, tokens: row.tokens, version: row.version, seen: row.seen || {} };
 }
 
 // Compare-and-set on the version column. `tokens` is only written when given.
@@ -80,7 +81,7 @@ export function supabaseDb(client) {
     async get(code) {
       const { data, error } = await client
         .from('games')
-        .select('state,tokens,version')
+        .select('state,tokens,version,seen')
         .eq('code', code)
         .maybeSingle();
       if (error) throw new Error(error.message);
@@ -91,6 +92,18 @@ export function supabaseDb(client) {
       if (!error) return true;
       if (error.code === '23505') return false;
       throw new Error(error.message);
+    },
+    // Presence only: no version bump, so heartbeats never wake the other clients.
+    async touch(code, seen) {
+      const { error } = await client
+        .from('games')
+        .update({ seen, updated_at: new Date().toISOString() })
+        .eq('code', code);
+      if (error) throw new Error(error.message);
+    },
+    async purge(olderThanIso) {
+      const { error } = await client.from('games').delete().lt('updated_at', olderThanIso);
+      if (error) throw new Error(error.message);
     },
     async update(code, expectedVersion, patch) {
       const { data, error } = await client

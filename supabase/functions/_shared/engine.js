@@ -140,6 +140,7 @@ export function createGame(hostId, hostName) {
     pending: [],
     finalLeft: null,
     endedBy: null,
+    abandonedBy: null,
     result: null,
     rps: null,
   };
@@ -204,6 +205,27 @@ export function removePlayer(state, id) {
   });
 }
 
+// How long a player may go without polling before the others treat them as gone, and how much of
+// that a closing tab leaves them (so a page reload survives but a closed tab ends the game fast).
+export const PRESENCE = { staleMs: 30000, byeGraceMs: 8000 };
+
+// Ends the game for everyone because `ids` walked away: a lobby just loses them, a game in progress
+// is scored at once among the players still here. Never leaves a game that cannot finish.
+export function dropAbsent(state, ids) {
+  const gone = ids.filter((id) => state.players.some((p) => p.id === id && p.connected));
+  if (gone.length === 0 || state.phase === 'done') return state;
+  if (state.phase === 'lobby') return gone.reduce((st, id) => removePlayer(st, id), state);
+  return produce(state, (s) => {
+    for (const id of gone) playerOf(s, id).connected = false;
+    s.abandonedBy = gone;
+    finishDraft(s);
+    if (s.phase === 'rps') {
+      s.phase = 'done';
+      s.rps = null;
+    }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Redacted view
 // ---------------------------------------------------------------------------
@@ -244,6 +266,7 @@ export function viewFor(state, playerId) {
     pending: state.pending.map((x) => ({ type: x.type, by: x.by, revealed: !!x.target })),
     finalLeft: state.finalLeft ? state.finalLeft.slice() : null,
     endedBy: state.endedBy ? { ...state.endedBy } : null,
+    abandonedBy: state.abandonedBy ? state.abandonedBy.slice() : null,
     result: state.result ? structuredClone(state.result) : null,
     rps: state.rps ? rpsView(state.rps, playerId) : null,
   };

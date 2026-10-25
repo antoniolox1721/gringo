@@ -31,7 +31,7 @@ const ghosts = new Set(); // fx keys hidden while a flying card is on its way th
 let pileHold = null; // what the pile showed before a card started flying onto it
 
 function freshLocal() {
-  return { armed: false, giving: null, peekSel: [], jMine: null, kingSwap: false, kickArm: null };
+  return { armed: false, giving: null, peekSel: [], jMine: null, kingSwap: false, kickArm: null, leaveArm: false };
 }
 
 // ---- storage (always guarded) ---------------------------------------------
@@ -437,6 +437,12 @@ function startSession(s) {
   refresh();
 }
 
+// The player's own choice to go: tell the server first (it ends a running game for the others).
+function leaveRoom() {
+  if (session) call('room', { action: 'leave', code: session.code, token: session.token }, { keepalive: true }).catch(() => {});
+  leave();
+}
+
 function leave(msg = '') {
   if (unsub) unsub();
   unsub = null;
@@ -489,7 +495,10 @@ function barHtml(brand = true, plaque = '') {
     ? '<span class="net" role="status" aria-label="Connection lost. Reconnecting…" title="Connection lost. Reconnecting…">Reconnecting…</span>' : '';
   const room = plaque || !session ? plaque : `<span class="room" title="Room code">Room <b>${esc(session.code)}</b></span>`;
   const on = soundOn();
-  return `<header class="bar" data-key="bar">${brand ? '<span class="brand">Gringo</span>' : ''}${room}${net}
+  const me = session && view && view.players.find((p) => p.id === view.you);
+  const exit = me && me.connected && ['setup', 'turns', 'final', 'rps'].includes(view.phase)
+    ? `<button class="leave${local.leaveArm ? ' armed' : ''}" data-act="exit">${local.leaveArm ? 'End game?' : 'Leave'}</button>` : '';
+  return `<header class="bar" data-key="bar">${brand ? '<span class="brand">Gringo</span>' : ''}${room}${net}${exit}
     <button class="icon sound${on ? ' on' : ''}" data-act="sound" aria-pressed="${on}" aria-label="Sound effects" title="Sound ${on ? 'on' : 'off'}">${SOUND_ICON}</button></header>`;
 }
 
@@ -763,6 +772,12 @@ function tieBroken() {
   return view.players.some((p) => p.connected && p.id !== r.winners[0] && r.totals[p.id] === best);
 }
 
+function leftNote() {
+  const gone = (view.abandonedBy || []).map(nameOf).map(esc);
+  if (gone.length === 0) return '';
+  return `${gone.join(' & ')} left, so the game ended. Scores are as they stood.`;
+}
+
 function doneHtml() {
   const winners = (view.result && view.result.winners) || [];
   const names = winners.map(nameOf).map(esc).join(' & ') || 'Nobody';
@@ -772,7 +787,7 @@ function doneHtml() {
   return `<div class="screen end" data-key="done">${barHtml()}<section class="placard result${youWon ? ' won' : ''}" id="result">${burst}
     <p class="eyebrow">Game over</p>
     <h2>${youWon ? 'You win!' : `${names} ${winners.length > 1 ? 'win' : 'wins'}`}</h2>
-    <p class="muted">${tieBroken() ? 'Tied for lowest, settled by rock, paper, scissors.' : 'Lowest total wins. Red kings count −3, jokers 0.'}</p></section>
+    <p class="muted">${leftNote() || (tieBroken() ? 'Tied for lowest, settled by rock, paper, scissors.' : 'Lowest total wins. Red kings count −3, jokers 0.')}</p></section>
     <div class="results">${resultHands()}</div>
     <button class="primary again" data-act="leave">Back to start</button></div>`;
 }
@@ -788,10 +803,15 @@ document.addEventListener('click', (ev) => {
   if (!el || el.disabled) return;
   const a = el.dataset.act;
   if (a === 'create' || a === 'join') ev.preventDefault();
+  if (a !== 'exit') local.leaveArm = false;
   switch (a) {
     case 'create': doCreate(); return;
     case 'join': doJoin(); return;
-    case 'leave': leave(); return;
+    case 'leave': leaveRoom(); return;
+    case 'exit':
+      if (!local.leaveArm) { local.leaveArm = true; render(); return; }
+      leaveRoom();
+      return;
     case 'sound': toggleSound(); lastHtml = ''; render(); return;
     case 'copy': copyCode(); return;
     case 'start': roomCall('start', {}); return;
@@ -926,4 +946,8 @@ async function slapAct(args) {
 render();
 if (session) startSession(session);
 window.addEventListener('online', refresh);
+// A closing tab says bye. The server keeps a short grace, so a reload does not end the game.
+window.addEventListener('pagehide', () => {
+  if (session) call('room', { action: 'view', code: session.code, token: session.token, bye: true }, { keepalive: true }).catch(() => {});
+});
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });

@@ -101,6 +101,12 @@ button.call {
   font: italic 700 1.12rem/1 var(--serif); color: #ffd27a; background: #1d1407; border: 1.5px solid #c8902b;
   box-shadow: 0 6px 14px -6px rgba(0, 0, 0, .7);
 }
+button.leave {
+  margin-left: auto; min-height: 44px; padding: 6px 14px; border-radius: 999px; font-size: .88rem; font-weight: 650;
+  background: var(--glass); border: 1px solid rgba(255, 255, 255, .12); color: var(--on-felt); white-space: nowrap;
+}
+button.leave.armed { background: var(--slap); border-color: transparent; color: var(--slap-ink); }
+button.leave + .icon { margin-left: 0; }
 button.link { background: none; border: 0; color: var(--on-felt-muted); text-decoration: underline; text-underline-offset: 3px; font-weight: 550; }
 button.small { min-height: 44px; padding: 6px 14px; font-size: .88rem; border-radius: 12px; }
 .slapbtn { border: 2px solid var(--slap); background: rgba(196, 31, 51, .18); color: #fff; }

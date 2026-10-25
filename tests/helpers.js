@@ -38,3 +38,40 @@ export function seededRng(seed = 1) {
   let n = seed;
   return () => (n = (n * 16807) % 2147483647) / 2147483647;
 }
+
+// In-memory db with the same get/insert/update(CAS) interface as supabaseDb. Every call yields so
+// that concurrent requests interleave like they would against a real database.
+export function fakeDb() {
+  const rows = new Map();
+  const tick = () => new Promise((r) => setImmediate(r));
+  return {
+    rows,
+    async get(code) {
+      await tick();
+      const row = rows.get(code);
+      return row ? structuredClone(row) : null;
+    },
+    async insert(row) {
+      await tick();
+      if (rows.has(row.code)) return false;
+      rows.set(row.code, structuredClone(row));
+      return true;
+    },
+    async touch(code, seen) {
+      await tick();
+      const row = rows.get(code);
+      if (row) rows.set(code, { ...row, seen: structuredClone(seen) });
+    },
+    async purge(olderThanIso) {
+      await tick();
+      for (const [code, row] of rows) if (row.updated_at && row.updated_at < olderThanIso) rows.delete(code);
+    },
+    async update(code, expectedVersion, patch) {
+      await tick();
+      const row = rows.get(code);
+      if (!row || row.version !== expectedVersion) return false;
+      rows.set(code, { ...row, ...structuredClone(patch) });
+      return true;
+    },
+  };
+}

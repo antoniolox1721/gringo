@@ -11,7 +11,7 @@ const BASE = isMock && !String(CFG.SUPABASE_URL || '').includes('localhost')
 
 export const pollMs = isMock ? 1000 : 5000;
 
-export async function call(fn, body) {
+export async function call(fn, body, opts = {}) {
   const headers = { 'content-type': 'application/json' };
   if (!isMock && CFG.SUPABASE_ANON_KEY) {
     headers.apikey = CFG.SUPABASE_ANON_KEY;
@@ -19,7 +19,7 @@ export async function call(fn, body) {
   }
   let res;
   try {
-    res = await fetch(`${BASE}/functions/v1/${fn}`, { method: 'POST', headers, body: JSON.stringify(body) });
+    res = await fetch(`${BASE}/functions/v1/${fn}`, { method: 'POST', headers, body: JSON.stringify(body), keepalive: !!opts.keepalive });
   } catch {
     const e = new Error('Cannot reach the server');
     e.status = 0;

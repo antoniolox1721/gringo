@@ -175,3 +175,50 @@ test('successful slap on an opponent card gives a card into the vacated slot', a
   await host.context.close();
   await guest.context.close();
 });
+
+const CARDS = {
+  hands: { 0: ['5S', '6S', '7S', '8S'], 1: ['9H', '10H', '2C', '3C'] },
+  discard: ['4D'],
+  deck: ['4C', '5D', '6D', '7D', '8D', 'AC', 'AD', 'AH'],
+};
+
+test('a player who closes the tab ends the game for the others', async ({ browser, baseURL, request }) => {
+  const errors = [];
+  const { host, guest } = await setupGame(browser, baseURL, request, errors, CARDS);
+  await guest.context.close();
+  await expect(host.page.locator('#result')).toBeVisible({ timeout: 15_000 });
+  await expect(host.page.locator('#result')).toContainText('You win!');
+  await expect(host.page.locator('#result')).toContainText('Gus left, so the game ended');
+  await noHScroll(host.page);
+  expect(errors).toEqual([]);
+  await host.context.close();
+});
+
+test('the Leave button asks twice, then ends the game for the other player', async ({ browser, baseURL, request }) => {
+  const errors = [];
+  const { host, guest } = await setupGame(browser, baseURL, request, errors, CARDS);
+  const leave = guest.page.locator('[data-act=exit]');
+  await expect(leave).toHaveText('Leave');
+  await leave.click();
+  await expect(leave).toHaveText('End game?');
+  await leave.click();
+  await expect(guest.page.locator('input#name')).toBeVisible();
+  await expect(host.page.locator('#result')).toContainText('Gus left, so the game ended', { timeout: 10_000 });
+  await expect(host.page.locator('#result')).toContainText('You win!');
+  await expect(host.page.locator('[data-act=exit]')).toHaveCount(0);
+  expect(errors).toEqual([]);
+  await host.context.close();
+  await guest.context.close();
+});
+
+test('reloading a page does not count as leaving', async ({ browser, baseURL, request }) => {
+  const errors = [];
+  const { host, guest } = await setupGame(browser, baseURL, request, errors, CARDS);
+  await guest.page.reload();
+  await expect(guest.page.locator('#hint')).toBeVisible();
+  await host.page.waitForTimeout(3000);
+  await expect(host.page.locator('#result')).toHaveCount(0);
+  expect(errors).toEqual([]);
+  await host.context.close();
+  await guest.context.close();
+});

@@ -2,35 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applyWithRetry, hashToken, broadcast, HttpError } from '../supabase/functions/_shared/store.js';
 import { handleAct, handleRoom } from '../supabase/functions/_shared/handlers.js';
-import { c, stackedGame } from './helpers.js';
-
-// In-memory db with the same get/insert/update(CAS) interface as supabaseDb. Every call yields so
-// that concurrent requests interleave like they would against a real database.
-function fakeDb() {
-  const rows = new Map();
-  const tick = () => new Promise((r) => setImmediate(r));
-  return {
-    rows,
-    async get(code) {
-      await tick();
-      const row = rows.get(code);
-      return row ? structuredClone(row) : null;
-    },
-    async insert(row) {
-      await tick();
-      if (rows.has(row.code)) return false;
-      rows.set(row.code, structuredClone(row));
-      return true;
-    },
-    async update(code, expectedVersion, patch) {
-      await tick();
-      const row = rows.get(code);
-      if (!row || row.version !== expectedVersion) return false;
-      rows.set(code, { ...row, ...structuredClone(patch) });
-      return true;
-    },
-  };
-}
+import { c, fakeDb, stackedGame } from './helpers.js';
 
 const quiet = { notify: async () => true };
 const live = (hand) => hand.filter((x) => x !== null).length;

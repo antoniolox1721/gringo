@@ -1,6 +1,7 @@
 import * as engine from './engine.js';
 import { HttpError, applyWithRetry, broadcast, hashToken, loadGame, playerIdForToken } from './store.js';
 
+const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 function randomCode(rng = engine.secureRandom) {
@@ -43,7 +44,7 @@ async function runEngine(fn) {
 const ok = (body) => ({ status: 200, body });
 
 export async function handleRoom(db, body, deps = {}) {
-  const { notify = broadcast, uuid = () => crypto.randomUUID(), rng = engine.secureRandom } = deps;
+  const { notify = broadcast, uuid = () => crypto.randomUUID(), rng = engine.secureRandom, now = Date.now } = deps;
   return guarded(async () => {
     const action = body && body.action;
     if (action === 'create') {
@@ -52,6 +53,8 @@ export async function handleRoom(db, body, deps = {}) {
       const token = uuid();
       const tokens = { [playerId]: await hashToken(token) };
       const state = engine.createGame(playerId, name);
+      // Housekeeping: rooms nobody has touched for a day are dead. Best effort.
+      if (db.purge) await db.purge(new Date(now() - ROOM_TTL_MS).toISOString()).catch(() => {});
       for (let i = 0; i < 20; i++) {
         const code = randomCode(rng);
         if (await db.insert({ code, state, tokens, version: state.version })) {
@@ -79,9 +82,31 @@ export async function handleRoom(db, body, deps = {}) {
     }
 
     if (action === 'view') {
-      const { state, tokens } = await loadGame(db, code);
+      const { state, tokens, seen } = await loadGame(db, code);
       const id = await playerIdForToken(tokens, body.token);
-      return ok({ view: engine.viewFor(state, id) });
+      const t = now();
+      // Every poll is a heartbeat. A closing tab says bye and keeps only a short grace period.
+      const next = { ...seen, [id]: body.bye === true ? t - (engine.PRESENCE.staleMs - engine.PRESENCE.byeGraceMs) : t };
+      for (const p of state.players) if (next[p.id] === undefined) next[p.id] = t;
+      if (db.touch) await db.touch(code, next);
+      const absent = state.players
+        .filter((p) => p.connected && p.id !== id && t - next[p.id] > engine.PRESENCE.staleMs)
+        .map((p) => p.id);
+      if (body.bye === true || absent.length === 0 || state.phase === 'done') {
+        return ok({ view: engine.viewFor(state, id) });
+      }
+      const res = await applyWithRetry(db, code, (st) => runEngine(() => engine.dropAbsent(st, absent)));
+      await notify(code, res.version);
+      return ok({ view: engine.viewFor(res.state, id) });
+    }
+
+    if (action === 'leave') {
+      const res = await applyWithRetry(db, code, async (state, tokens) => {
+        const id = await playerIdForToken(tokens, body.token);
+        return runEngine(() => engine.dropAbsent(state, [id]));
+      });
+      await notify(code, res.version);
+      return ok({ ok: true });
     }
 
     if (action === 'start' || action === 'kick') {

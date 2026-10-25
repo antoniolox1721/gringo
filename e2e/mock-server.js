@@ -24,6 +24,9 @@ function seededRng(seed) {
 }
 const RNG = process.env.MOCK_SEED !== undefined && process.env.MOCK_SEED !== '' ? seededRng(Number(process.env.MOCK_SEED)) : undefined;
 const TEST_MODE = process.env.MOCK_TEST === '1';
+// Presence: MOCK_STALE_MS shortens the window after which a silent player counts as gone.
+const STALE_MS = Number(process.env.MOCK_STALE_MS) || engine.PRESENCE.staleMs;
+const BYE_GRACE_MS = Math.min(engine.PRESENCE.byeGraceMs, STALE_MS / 3);
 
 const rooms = new Map(); // code -> { state, tokens: Map(token -> playerId) }
 
@@ -76,7 +79,7 @@ function roomEndpoint(body) {
       const code = newCode();
       const playerId = randomUUID();
       const token = randomUUID();
-      rooms.set(code, { state: engine.createGame(playerId, name), tokens: new Map([[token, playerId]]) });
+      rooms.set(code, { state: engine.createGame(playerId, name), tokens: new Map([[token, playerId]]), seen: {} });
       return { code, playerId, token };
     }
     case 'join': {
@@ -106,7 +109,20 @@ function roomEndpoint(body) {
     case 'view': {
       const room = roomOf(body.code);
       const id = auth(room, body.token);
+      const t = Date.now();
+      room.seen[id] = body.bye === true ? t - (STALE_MS - BYE_GRACE_MS) : t;
+      for (const p of room.state.players) if (room.seen[p.id] === undefined) room.seen[p.id] = t;
+      const absent = room.state.players
+        .filter((p) => p.connected && p.id !== id && t - room.seen[p.id] > STALE_MS)
+        .map((p) => p.id);
+      if (body.bye !== true && absent.length) room.state = wrap(() => engine.dropAbsent(room.state, absent));
       return { view: engine.viewFor(room.state, id) };
+    }
+    case 'leave': {
+      const room = roomOf(body.code);
+      const id = auth(room, body.token);
+      room.state = wrap(() => engine.dropAbsent(room.state, [id]));
+      return { ok: true };
     }
     default:
       throw new HttpError(400, 'unknown action');
