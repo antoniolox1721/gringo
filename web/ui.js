@@ -190,6 +190,25 @@ function applyView(v) {
   motion.flipFrom($app, '[data-flip]', flipBefore);
   launch(plan, from);
   announce(prev, v);
+  reshuffleFx(prev, v);
+}
+
+// When the deck runs out the pile (all but its top card) is shuffled into a new deck. The views
+// show it as the deck growing while the pile shrinks, which never happens in any other turn.
+function reshuffleFx(p, v) {
+  const inPlay = (ph) => ph === 'turns' || ph === 'final';
+  if (!inPlay(p.phase) || !inPlay(v.phase) || v.deckCount <= p.deckCount || v.discardCount >= p.discardCount) return;
+  toast('The deck ran out. The pile is shuffled back in.');
+  blip('shuffle');
+  if (motion.reduced()) return;
+  const from = rectOf('pile');
+  const to = rectOf('deck');
+  if (!from || !to) return;
+  const n = Math.min(9, p.discardCount - 1);
+  for (let i = 0; i < n; i++) {
+    motion.fly({ from, to, face: null, back: BACK, delay: i * 55, arc: i % 2 ? 1.6 : -1.6 });
+  }
+  setTimeout(() => motion.riffle($app.querySelector('.pile.deck')), 250 + n * 55);
 }
 
 // ---- motion: derive what happened by diffing two views ----------------------

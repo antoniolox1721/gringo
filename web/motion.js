@@ -159,3 +159,17 @@ export function flipFrom(root, sel, before) {
     ], { duration: 320, easing: TRAVEL });
   }
 }
+
+// The deck being riffled: it splits, shuffles side to side and squares up again.
+export function riffle(el) {
+  if (!el || reduced()) return;
+  el.animate([
+    { transform: 'translateX(0) rotate(0)' },
+    { offset: 0.15, transform: 'translateX(-9px) rotate(-5deg)' },
+    { offset: 0.3, transform: 'translateX(8px) rotate(4deg)' },
+    { offset: 0.45, transform: 'translateX(-7px) rotate(-3deg)' },
+    { offset: 0.6, transform: 'translateX(6px) rotate(3deg)' },
+    { offset: 0.8, transform: 'translateX(-2px) rotate(-1deg) scale(1.05)' },
+    { transform: 'translateX(0) rotate(0) scale(1)' },
+  ], { duration: 720, easing: 'ease-in-out' });
+}

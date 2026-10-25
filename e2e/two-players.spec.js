@@ -313,3 +313,24 @@ test('an open page reloads by itself once a newer build is deployed, and only on
   expect(loads, 'the guard stops a reload loop').toBe(2);
   await context.close();
 });
+
+test('when the deck runs out the pile is shuffled back in with a flurry of cards', async ({ browser, baseURL, request }) => {
+  const errors = [];
+  const { host, guest } = await setupGame(browser, baseURL, request, errors, {
+    hands: { 0: ['5S', '6S', '7S', '8S'], 1: ['9H', '10H', '2C', '3C'] },
+    discard: ['4D', '5D', '6D', '7D', '8D', 'AC'],
+    deck: [],
+  });
+  await host.page.click('[data-act=draw]');
+  // Shuffled cards fly from the pile to the deck (on top of the draw itself).
+  await expect.poll(() => host.page.locator('.flyer').count(), { timeout: 3000 }).toBeGreaterThan(2);
+  for (const { page } of [host, guest]) {
+    await expect(page.locator('#toast')).toContainText('The deck ran out');
+    await expect(page.locator('.pile.deck small b')).toHaveText('4');
+    await expect(page.locator('.pile.discard small b')).toHaveText('1');
+  }
+  await expect(host.page.locator('#drawn')).toBeVisible();
+  expect(errors).toEqual([]);
+  await host.context.close();
+  await guest.context.close();
+});

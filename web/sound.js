@@ -140,6 +140,16 @@ const SOUNDS = {
     tone(c, o, t, { f: 150, to: 62, dur: 0.1, gain: 0.34 });
     return 0.14;
   },
+  // A deck being riffled: a run of quick card ticks that thickens, then a tap to square it up.
+  shuffle(c, o, t) {
+    for (let i = 0; i < 14; i++) {
+      const at = t + i * 0.042 + (i % 2) * 0.008;
+      noise(c, o, at, { dur: 0.04, gain: 0.2 + i * 0.01, f: 3200 + i * 140, to: 6500, q: 1.1, attack: 0.004 });
+    }
+    noise(c, o, t + 0.64, { dur: 0.07, gain: 0.3, type: 'lowpass', f: 1600, to: 300, q: 0.7 });
+    tone(c, o, t + 0.64, { f: 140, to: 62, dur: 0.1, gain: 0.3 });
+    return 0.8;
+  },
   // A hand smacking the pile.
   slap(c, o, t) {
     noise(c, o, t, { dur: 0.09, gain: 0.55, f: 2600, to: 1200, q: 0.8, attack: 0.001, send: 0.15 });
