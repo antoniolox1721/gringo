@@ -781,7 +781,7 @@ function rpsHtml() {
       <button data-act="rps" data-pick="s"><span aria-hidden="true">✌️</span>Scissors</button></div>`;
   }
   return `<div class="screen end" data-key="rps">${barHtml()}<section class="placard" id="rps">
-    <p class="eyebrow">Tie for the lowest total</p><h2>Rock, paper, scissors</h2>
+    <p class="eyebrow">Same points, same number of cards</p><h2>Rock, paper, scissors</h2>
     <p>Round ${r.round + 1} between ${r.players.map(nameOf).map(esc).join(' and ')}.</p>${last}${ctl}</section>
     <div class="results">${resultHands()}</div></div>`;
 }
@@ -829,7 +829,7 @@ function doneHtml() {
   return `<div class="screen end" data-key="done">${barHtml()}<section class="placard result${youWon ? ' won' : ''}" id="result">${burst}
     <p class="eyebrow">Game over</p>
     <h2>${youWon ? 'You win!' : `${names} ${winners.length > 1 ? 'win' : 'wins'}`}</h2>
-    <p class="muted">${leftNote() || (tieBroken() ? 'Tied for lowest, settled by rock, paper, scissors.' : 'Lowest total wins. Red kings count −3, jokers 0.')}</p></section>
+    <p class="muted">${leftNote() || (view.result && view.result.decidedBy === 'cards' ? 'Tied on points, so the player with fewer cards wins.' : tieBroken() ? 'Same points and same number of cards, settled by rock, paper, scissors.' : 'Lowest total wins. Red kings count −3, jokers 0.')}</p></section>
     <div class="results">${resultHands()}</div>
     ${againHtml()}</div>`;
 }

@@ -154,6 +154,29 @@ test('tie goes to rps with only tied players', () => {
   assert.deepEqual(s.result.winners, ['a', 'b']);
 });
 
+test('same points: the player with fewer cards wins without rps', () => {
+  const g = game();
+  g.phase = 'final';
+  g.players[0].hand = [c('2'), c('3'), null, null];
+  g.players[1].hand = [c('5', 'H'), null, null, null];
+  g.players[2].hand = [c('10'), null, null, null];
+  const s = finishGame(g);
+  assert.equal(s.phase, 'done');
+  assert.deepEqual(s.result.winners, ['b']);
+  assert.equal(s.result.decidedBy, 'cards');
+});
+
+test('same points and same card count among the fewest still goes to rps', () => {
+  const g = game();
+  g.phase = 'final';
+  g.players[0].hand = [c('2'), c('3'), null, null];
+  g.players[2].hand = [c('2', 'D'), c('3', 'D'), null, null];
+  g.players[1].hand = [c('4', 'H'), c('A', 'H'), null, null];
+  const s = finishGame(g);
+  assert.equal(s.phase, 'rps');
+  assert.deepEqual(s.rps.players, ['a', 'b', 'c']);
+});
+
 function tied(n = 2) {
   const g = game();
   g.phase = 'final';

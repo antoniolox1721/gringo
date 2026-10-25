@@ -751,8 +751,13 @@ function finishDraft(s) {
   const live = connectedPlayers(s);
   const eligible = live.length > 0 ? live : s.players;
   const best = Math.min(...eligible.map((p) => totals[p.id]));
-  const winners = eligible.filter((p) => totals[p.id] === best).map((p) => p.id);
+  const tiedOnPoints = eligible.filter((p) => totals[p.id] === best);
+  // Same points: whoever holds fewer cards wins. Still level: rock, paper, scissors.
+  const count = (p) => p.hand.filter((x) => x).length;
+  const fewest = Math.min(...tiedOnPoints.map(count));
+  const winners = tiedOnPoints.filter((p) => count(p) === fewest).map((p) => p.id);
   s.result = { totals, winners };
+  if (tiedOnPoints.length > 1 && winners.length === 1) s.result.decidedBy = 'cards';
   clearAllViews(s);
   s.drawn = null;
   s.pending = [];
