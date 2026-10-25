@@ -118,6 +118,12 @@ test('full game: wrong slap grows hand, gringo, final round, result, hidden info
   await guest.page.click('[data-act=discard]');
   await expect(host.page.locator('#hint')).toContainText('Your turn');
   await host.page.click('[data-act=gringo]');
+  await expect(host.page.getByText('Are you sure you want to call Gringo?')).toBeVisible();
+  await host.page.click('[data-act=gringo-no]');
+  await expect(host.page.locator('.confirm')).toHaveCount(0);
+  await expect(host.page.locator('#final-banner')).toHaveCount(0);
+  await host.page.click('[data-act=gringo]');
+  await host.page.click('[data-act=gringo-yes]');
   await expect(host.page.locator('#final-banner')).toContainText('You called Gringo. Last turns: Gus.');
   await expect(guest.page.locator('#final-banner')).toContainText('Hanna called Gringo. Last turns: You.');
   await expect(guest.page.locator('#hint')).toContainText('Your turn');
@@ -126,9 +132,13 @@ test('full game: wrong slap grows hand, gringo, final round, result, hidden info
   // Guest takes the last turn; both land on the result screen.
   await guest.page.click('[data-act=draw]');
   await guest.page.click('[data-act=discard]');
+  // The last turn opens a short slap window, then the cards turn over on the table itself.
+  await expect(host.page.locator('#ending-banner')).toContainText('Last chance to slap');
   for (const { page } of [host, guest]) {
-    await expect(page.locator('#result')).toBeVisible();
-    await expect(page.locator('.total')).toHaveText(['Total 26', 'Total 29']);
+    await expect(page.locator('#result')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(`.seat[data-player="${hs.playerId}"] .total`)).toHaveText('Total 26');
+    await expect(page.locator(`.seat[data-player="${gs.playerId}"] .total`)).toHaveText('Total 29');
+    await expect(page.locator('.flipper')).toHaveCount(9);
     await noHScroll(page);
   }
   await expect(host.page.locator('#result')).toContainText('You win!');

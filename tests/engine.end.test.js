@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   callGringo, checkZero, finishGame, submitRps, draw, discardDrawn, slap, removePlayer,
-  usePower, skipPower, viewFor,
+  usePower, skipPower, viewFor, settle, endRound,
 } from '../supabase/functions/_shared/engine.js';
 import { c, stackedGame } from './helpers.js';
 
@@ -34,6 +34,9 @@ test('gringo gives each other player exactly one more turn and the caller none',
   assert.equal(s.phase, 'final');
   assert.equal(s.turn, 2);
   s = playTurn(s, 'c');
+  assert.equal(s.phase, 'ending', 'the last turn opens a slap window instead of scoring at once');
+  assert.equal(s.result, null);
+  s = settle(s, 0);
   assert.equal(s.phase, 'done');
   assert.deepEqual(s.result.winners, ['a']);
   assert.deepEqual(s.result.totals, { a: 14, b: 30, c: 16 });
@@ -52,7 +55,7 @@ test('with four players the caller is skipped when the round wraps', () => {
   s = playTurn(s, 'd');
   assert.equal(s.turn, 0);
   s = playTurn(s, 'a');
-  assert.equal(s.phase, 'done');
+  assert.equal(settle(s, 0).phase, 'done');
 });
 
 test('gringo only on own turn before drawing', () => {
@@ -85,7 +88,7 @@ test('empty-hand trigger mid-turn of another player lets that turn count, then s
   s = playTurn(s, 'c');
   assert.equal(s.turn, 1);
   assert.equal(s.phase, 'final');
-  s = playTurn(s, 'b');
+  s = settle(playTurn(s, 'b'), 0);
   assert.equal(s.phase, 'done');
   assert.deepEqual(s.result.winners, ['a']);
   assert.equal(s.result.totals.a, 0);
@@ -261,14 +264,18 @@ test('hands are revealed in view only when done', () => {
   assert.equal(viewFor(done, 'a').players[1].hand[0].card.uid, uid);
   assert.equal(viewFor(done, 'a').result.winners.length, 1);
   const { s: inRps } = tied(2);
-  assert.equal(viewFor(inRps, 'c').players[0].hand[0].card, undefined);
+  assert.equal(inRps.phase, 'rps');
+  assert.ok(viewFor(inRps, 'c').players[0].hand[0].card, 'the tiebreak is played with every hand shown');
+  const mid = game();
+  mid.phase = 'ending';
+  assert.equal(viewFor(mid, 'a').players[1].hand[0].card, undefined, 'hands stay hidden during the slap window');
 });
 
 test('a disconnected player\'s turn is skipped in the final round and does not block ending', () => {
   let s = callGringo(game(), 'a');
   s = removePlayer(s, 'c');
   assert.deepEqual(s.finalLeft, ['b']);
-  s = playTurn(s, 'b');
+  s = settle(playTurn(s, 'b'), 0);
   assert.equal(s.phase, 'done');
   assert.ok(!s.result.winners.includes('c'));
 });
@@ -278,7 +285,7 @@ test('disconnecting while it is your final turn ends the game when nobody is lef
   s = playTurn(s, 'b');
   assert.equal(s.turn, 2);
   s = removePlayer(s, 'c');
-  assert.equal(s.phase, 'done');
+  assert.equal(settle(s, 0).phase, 'done');
 });
 
 test('gringo with every other player offline finishes immediately', () => {

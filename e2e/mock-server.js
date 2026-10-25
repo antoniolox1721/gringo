@@ -27,7 +27,7 @@ const TEST_MODE = process.env.MOCK_TEST === '1';
 // Presence: MOCK_STALE_MS shortens the window after which a silent player counts as gone.
 const STALE_MS = Number(process.env.MOCK_STALE_MS) || engine.PRESENCE.staleMs;
 const BYE_GRACE_MS = Math.min(engine.PRESENCE.byeGraceMs, STALE_MS / 3);
-const LIMITS = { staleMs: STALE_MS, byeGraceMs: BYE_GRACE_MS, idleMs: Number(process.env.MOCK_IDLE_MS) || engine.PRESENCE.idleMs, lonelyMs: Number(process.env.MOCK_LONELY_MS) || engine.PRESENCE.lonelyMs };
+const LIMITS = { staleMs: STALE_MS, byeGraceMs: BYE_GRACE_MS, idleMs: Number(process.env.MOCK_IDLE_MS) || engine.PRESENCE.idleMs, lonelyMs: Number(process.env.MOCK_LONELY_MS) || engine.PRESENCE.lonelyMs, endingMs: Number(process.env.MOCK_ENDING_MS) || engine.PRESENCE.endingMs };
 
 const rooms = new Map(); // code -> { state, tokens: Map(token -> playerId) }
 
@@ -121,6 +121,7 @@ function roomEndpoint(body) {
         rooms.delete(String(body.code).toUpperCase());
         throw new HttpError(404, 'room not found');
       }
+      if (engine.endingOver(room.state, t, LIMITS)) room.state = engine.stamp(room.state, engine.settle(room.state, t, LIMITS), t);
       const absent = engine.absentPlayers(room.state, room.seen, id, t, LIMITS);
       if (body.bye !== true && absent.length) room.state = wrap(() => engine.stamp(room.state, engine.dropAbsent(room.state, absent), t));
       return { view: engine.viewFor(room.state, id) };
@@ -140,7 +141,8 @@ function actEndpoint(body) {
   const room = roomOf(body.code);
   const id = auth(room, body.token);
   const a = body.args || {};
-  const s = room.state;
+  const s0 = room.state;
+  const s = engine.settle(s0, Date.now(), LIMITS);
   let next;
   let extra = {};
   wrap(() => {
@@ -167,7 +169,7 @@ function actEndpoint(body) {
       default: throw new Error('unknown action');
     }
   });
-  room.state = engine.stamp(s, next, Date.now());
+  room.state = engine.stamp(s0, next, Date.now());
   return { view: engine.viewFor(room.state, id), ...extra };
 }
 

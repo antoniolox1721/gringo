@@ -26,7 +26,7 @@ export default defineConfig({
   webServer: {
     command: 'node e2e/mock-server.js',
     url: `http://127.0.0.1:${port}/`,
-    env: { PORT: String(port), MOCK_TEST: '1', MOCK_SEED: '1', MOCK_STALE_MS: '5000' },
+    env: { PORT: String(port), MOCK_TEST: '1', MOCK_SEED: '1', MOCK_STALE_MS: '5000', MOCK_ENDING_MS: '1200' },
     reuseExistingServer: false,
     timeout: 20_000,
   },

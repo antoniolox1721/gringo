@@ -31,7 +31,7 @@ const ghosts = new Set(); // fx keys hidden while a flying card is on its way th
 let pileHold = null; // what the pile showed before a card started flying onto it
 
 function freshLocal() {
-  return { armed: false, giving: null, peekSel: [], jMine: null, kickArm: null, leaveArm: false };
+  return { armed: false, giving: null, peekSel: [], jMine: null, kickArm: null, leaveArm: false, confirmGringo: false };
 }
 
 // ---- storage (always guarded) ---------------------------------------------
@@ -89,7 +89,11 @@ const whoName = (id) => (view && id === view.you ? 'You' : nameOf(id));
 const possessive = (id) => (view && id === view.you ? 'your' : `${nameOf(id)}'s`);
 const seatIndex = (id) => Math.max(0, view.players.findIndex((p) => p.id === id));
 const inPlay = () => view && (view.phase === 'turns' || view.phase === 'final');
-const atTable = () => view && ['setup', 'turns', 'final'].includes(view.phase);
+const atTable = () => view && ['setup', 'turns', 'final', 'ending'].includes(view.phase);
+// Slaps are allowed all through the last round and for a moment after the last turn.
+const playing = () => view && ['turns', 'final', 'ending'].includes(view.phase);
+const isOver = () => view && (view.phase === 'done' || view.phase === 'rps');
+const ENDING_MS = 3500; // keep in step with PRESENCE.endingMs on the server
 const live = (p) => p.hand.filter((s) => !s.empty).length;
 
 function toast(msg, kind = '') {
@@ -165,9 +169,20 @@ function reloadIfStale() {
   location.reload();
 }
 
+// During the slap window every client asks again once it is over, so the game is scored on time
+// even when nobody else polls (the server settles it on the first poll that finds it over).
+let endTimer = null;
+let endTries = 0;
+function watchEnding(v) {
+  if (v.phase !== 'ending') { clearTimeout(endTimer); endTimer = null; endTries = 0; return; }
+  if (endTimer) return;
+  endTimer = setTimeout(() => { endTimer = null; refresh(); }, endTries++ === 0 ? ENDING_MS + 250 : 700);
+}
+
 function applyView(v) {
   if (!v) return;
   if (view && v.version < view.version) return; // stale response
+  watchEnding(v);
   const prev = view;
   if (prev && v.version === prev.version) { view = v; render(); return; }
   view = v;
@@ -184,6 +199,7 @@ function applyView(v) {
   } else if (plan.some((f) => f.to === 'pile')) {
     pileHold = { card: null, claimed: false };
   }
+  if (v.phase === 'done' || v.phase === 'rps') local = { ...local, armed: false, giving: null, confirmGringo: false };
   // A new top card changes what matches: drop an armed slap rather than risk a penalty on a stale target.
   if ((local.armed || local.giving) && cardId(v.discardTop) !== cardId(prev.discardTop)) local = { ...local, armed: false, giving: null };
   render();
@@ -232,7 +248,7 @@ function planFlights(p, v) {
     }));
     return out;
   }
-  if (!['turns', 'final'].includes(v.phase) || !['turns', 'final', 'setup'].includes(p.phase)) return out;
+  if (!['turns', 'final', 'ending'].includes(v.phase) || !['turns', 'final', 'ending', 'setup'].includes(p.phase)) return out;
 
   const changed = [];
   const emptied = [];
@@ -363,13 +379,19 @@ function powerBurst(rank) {
 const POWER_TEXT = { J: 'a Jack: blind swap', Q: 'a Queen: look at any card', K: 'a King: look at two cards, then swap or not' };
 function announce(p, v) {
   const parts = [];
-  if (v.phase === 'done' && p.phase !== 'done') blip(v.result && v.result.winners.includes(v.you) ? 'win' : 'lose');
+  if (isOver() && !['done', 'rps'].includes(p.phase) && reveal) {
+    // Cards tick over one by one; the verdict sound waits for the last total.
+    for (let i = 0; i < reveal.count; i++) setTimeout(() => blip('flip'), reveal.base + i * reveal.step + 120);
+    if (v.phase === 'done') setTimeout(() => blip(v.result && v.result.winners.includes(v.you) ? 'win' : 'lose'), reveal.endAt);
+  } else if (v.phase === 'done' && p.phase === 'rps' && reveal) {
+    setTimeout(() => blip(v.result && v.result.winners.includes(v.you) ? 'win' : 'lose'), 300);
+  }
   if (atTable() || v.phase === 'done' || v.phase === 'rps') {
     for (const np of v.players) {
       const op = p.players.find((x) => x.id === np.id);
       if (!op) continue;
       if (np.gringo && !op.gringo) callout(`${whoName(np.id)} called Gringo`, 'Final round. Everyone else plays one more turn.');
-      if (np.hand.length > op.hand.length && inPlay()) {
+      if (np.hand.length > op.hand.length && playing()) {
         if (np.id === v.you) buzz([30, 40, 30]);
         else parts.push(`${np.name} missed a slap and takes a penalty card.`);
       }
@@ -379,7 +401,7 @@ function announce(p, v) {
       callout(`${whoName(v.endedBy.id)} ${v.endedBy.id === v.you ? 'have' : 'has'} no cards left`, 'Final round. Everyone else plays one more turn.');
     }
   }
-  if (inPlay()) {
+  if (playing()) {
     const topMoved = v.discardTop && cardId(v.discardTop) !== cardId(p.discardTop);
     if (topMoved && v.discardClaimed && !p.discardClaimed) {
       const slapper = v.players.find((np) => {
@@ -395,7 +417,7 @@ function announce(p, v) {
     if (v.turnId !== p.turnId || (p.phase === 'setup' && v.phase === 'turns')) {
       const ring = $app.querySelector(`.seat[data-player="${CSS.escape(v.turnId || '')}"] .ring`);
       motion.pulse(ring);
-      if (v.turnId === v.you) { buzz(15); blip('turn'); }
+      if (v.turnId === v.you && v.phase !== 'ending') { buzz(15); blip('turn'); }
     }
   }
   if (parts.length && !busy) toast(parts.slice(0, 2).join(' '));
@@ -562,11 +584,9 @@ function screenHtml() {
   if (!session) return homeHtml();
   if (!view) return connectingHtml();
   const m = me();
-  if (m && !m.connected && view.phase !== 'done') return removedHtml();
+  if (m && !m.connected && view.phase !== 'done' && view.phase !== 'rps') return removedHtml();
   switch (view.phase) {
     case 'lobby': return lobbyHtml();
-    case 'rps': return rpsHtml();
-    case 'done': return doneHtml();
     default: return gameHtml();
   }
 }
@@ -581,7 +601,7 @@ function barHtml(brand = true, plaque = '') {
   const room = plaque || !session ? plaque : `<span class="room" title="Room code">Room <b>${esc(session.code)}</b></span>`;
   const on = soundOn();
   const me = session && view && view.players.find((p) => p.id === view.you);
-  const exit = me && me.connected && ['setup', 'turns', 'final', 'rps'].includes(view.phase)
+  const exit = me && me.connected && ['setup', 'turns', 'final', 'ending', 'rps'].includes(view.phase)
     ? `<button class="leave${local.leaveArm ? ' armed' : ''}" data-act="exit">${local.leaveArm ? 'End game?' : 'Leave'}</button>` : '';
   return `<header class="bar" data-key="bar">${brand ? '<span class="brand">Gringo</span>' : ''}${room}${net}${exit}
     <button class="icon sound${on ? ' on' : ''}" data-act="sound" aria-pressed="${on}" aria-label="Sound effects" title="Sound ${on ? 'on' : 'off'}">${SOUND_ICON}</button></header>`;
@@ -682,6 +702,7 @@ function currentMode() {
         : `<b>Slap:</b> tap any card that matches ${esc(top)}. A miss costs a penalty card.`;
     return { id: 'slap', mine: true, slap: true, can: () => true, hint };
   }
+  if (view.phase === 'ending') return { id: 'ending', hint: '<b>Round over.</b> Slap a match now, before the cards are counted.', can: () => false };
   if (pend && pend.by === view.you) {
     if (pend.type === 'J') {
       if (local.jMine === null) return { id: 'J1', mine: true, hint: '<b>Jack:</b> tap one of YOUR cards to swap away.', can: (mine) => mine };
@@ -698,6 +719,32 @@ function currentMode() {
   return { id: 'other', hint: `<b>${esc(nameOf(view.turnId))}'s turn.</b> You can slap a match any time.`, can: () => false };
 }
 
+// The end-of-game reveal: when each card turns over and when each total shows up. It is worked out
+// once per finished hand layout and kept, so later polls and the move from tiebreak to result do not
+// replay it. `settled` flips once the last card is over; the winner and the result panel wait for it.
+let reveal = null;
+function revealPlan() {
+  if (!isOver()) { reveal = null; return null; }
+  const sig = view.players.map((p) => `${p.id}:${p.hand.map((e) => (e.empty ? '_' : '#')).join('')}`).join('|');
+  if (reveal && reveal.sig === sig) return reveal;
+  const keys = [];
+  for (const p of view.players) for (const e of p.hand) if (!e.empty) keys.push(`${p.id}:${e.slot}`);
+  const still = motion.reduced();
+  const step = still ? 0 : Math.max(110, Math.min(300, Math.floor(4200 / Math.max(keys.length, 1))));
+  const base = still ? 0 : 500;
+  const idx = new Map(keys.map((k, i) => [k, i]));
+  const lastOf = {};
+  for (const p of view.players) lastOf[p.id] = Math.max(-1, ...p.hand.filter((e) => !e.empty).map((e) => idx.get(`${p.id}:${e.slot}`)));
+  const plan = {
+    sig, idx, step, base, count: keys.length, settled: still,
+    totalAt: (id) => base + (lastOf[id] + 1) * step + 150,
+    endAt: still ? 0 : base + keys.length * step + 450,
+  };
+  reveal = plan;
+  if (!plan.settled) setTimeout(() => { if (reveal === plan) { plan.settled = true; render(); } }, plan.endAt);
+  return plan;
+}
+
 const RING = '<svg class="countdown" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15"/><circle class="arc" cx="18" cy="18" r="15"/></svg>';
 
 function slotHtml(p, e, mode) {
@@ -711,7 +758,11 @@ function slotHtml(p, e, mode) {
   const ghost = ghosts.has(key) ? 'ghost' : '';
   let inner;
   let name;
-  if (e.empty) { inner = `<span class="card gap${ghost ? ` ${ghost}` : ''}" data-fx="${esc(key)}"></span>`; name = 'empty spot'; }
+  if (reveal && e.card) {
+    // End of the game: the card turns over in place, one after another.
+    inner = `<span class="flipper" style="--d:${reveal.base + reveal.idx.get(`${p.id}:${e.slot}`) * reveal.step}ms">${backHtml('rb', key)}${cardHtml(e.card, { cls: 'rf' })}</span>`;
+    name = cardSpoken(e.card);
+  } else if (e.empty) { inner = `<span class="card gap${ghost ? ` ${ghost}` : ''}" data-fx="${esc(key)}"></span>`; name = 'empty spot'; }
   else if (rv || kingHeld) {
     const card = rv ? rv.card : e.card;
     inner = cardHtml(card, { cls: `peek ${ghost}`.trim(), fx: key }) + (rv && rv.kind === 'peek' ? RING : '');
@@ -727,24 +778,33 @@ function seatHtml(p, pos, mode) {
   const rot = pos === 'left' ? 90 : pos === 'right' ? -90 : 0;
   const active = (inPlay() && p.id === view.turnId) || (view.phase === 'setup' && p.connected && !p.ready);
   const n = live(p);
+  const winners = (view.result && view.result.winners) || [];
+  const won = !!reveal && winners.includes(p.id) && view.phase === 'done';
+  const forfeit = !!reveal && (view.abandonedBy || []).includes(p.id);
   const badges = [
     view.phase === 'setup' ? (p.ready ? '<span class="badge ok">ready</span>' : '<span class="badge">peeking</span>') : '',
     p.gringo ? '<span class="badge call">gringo</span>' : '',
-    p.connected ? '' : '<span class="badge off">offline</span>',
+    won && reveal.settled ? '<span class="badge win">winner</span>' : '',
+    forfeit ? '<span class="badge off">forfeit</span>' : p.connected ? '' : '<span class="badge off">offline</span>',
   ].join('');
+  const totals = view.result && view.result.totals;
+  const total = reveal && totals && totals[p.id] !== undefined
+    ? `<span class="total" style="--d:${reveal.totalAt(p.id)}ms">Total ${totals[p.id]}</span>` : '';
   const holding = inPlay() && view.hasDrawn && view.turnId === p.id && !isMe;
   const held = holding
     ? `<div class="held-mini" data-key="held">${backHtml(ghosts.has(`held:${p.id}`) ? 'ghost' : '', `held:${p.id}`)}<small>drew</small></div>` : '';
-  return `<section class="seat pos-${pos}${isMe ? ' me' : ''}${active ? ' active' : ''}${p.connected ? '' : ' offline'}" data-key="seat:${esc(p.id)}" data-player="${esc(p.id)}" data-rot="${rot}" style="--seat: var(--seat-${seatIndex(p.id)}); --n: ${p.hand.length}">
+  return `<section class="seat pos-${pos}${isMe ? ' me' : ''}${active ? ' active' : ''}${p.connected || reveal ? '' : ' offline'}${won && reveal.settled ? ' winner' : ''}" data-key="seat:${esc(p.id)}" data-player="${esc(p.id)}" data-rot="${rot}" style="--seat: var(--seat-${seatIndex(p.id)}); --n: ${p.hand.length}">
     <i class="ring" aria-hidden="true"></i>
     <div class="chip"><span class="dot" aria-hidden="true"></span><b class="name">${esc(p.name)}</b>${isMe ? '<span class="you">you</span>' : ''}
-      <span class="count" aria-label="${n} cards">${n}</span>${badges}</div>
+      <span class="count" aria-label="${n} cards">${n}</span>${badges}${total}</div>
     <div class="hand">${p.hand.map((e) => slotHtml(p, e, mode)).join('')}</div>${held}
   </section>`;
 }
 
 function gameHtml() {
-  const mode = currentMode();
+  const over = isOver();
+  const plan = revealPlan();
+  const mode = over ? { id: 'over', hint: '', can: () => false } : currentMode();
   const m = me();
   const myIdx = view.players.findIndex((p) => p.id === view.you);
   const order = myIdx < 0 ? view.players.slice() : [...view.players.slice(myIdx + 1), ...view.players.slice(0, myIdx)];
@@ -763,6 +823,10 @@ function gameHtml() {
     banner = `<div class="final" id="final-banner" data-key="final" role="status" title="${text}"><b>Final round</b><span>${text}</span></div>`;
   }
 
+  if (view.phase === 'ending') {
+    banner = `<div class="final ending" id="ending-banner" data-key="final" role="status" style="--ending:${ENDING_MS}ms"><b>Round over</b><span>Last chance to slap a match.</span><i class="fuse" aria-hidden="true"></i></div>`;
+  }
+
   const shown = pileHold || { card: view.discardTop, claimed: view.discardClaimed };
   const pileCard = shown.card
     ? cardHtml(shown.card, { fx: 'pile', stamp: shown.claimed, cls: shown.claimed ? 'claimed' : '' })
@@ -779,7 +843,9 @@ function gameHtml() {
 
   const btns = [];
   const b = (act, label, cls = '') => `<button class="${cls}" data-act="${act}" data-key="b:${act}">${label}</button>`;
-  if (view.phase === 'setup') {
+  if (over) {
+    // The table itself is the result; the buttons come back once the last total is in.
+  } else if (view.phase === 'setup') {
     if (m && !m.ready) btns.push(`<button class="primary wide" data-act="peek" data-key="b:peek" ${local.peekSel.length === 2 ? '' : 'disabled'}>Peek <span class="tally">${local.peekSel.length}/2</span></button>`);
   } else {
     if (myTurn && !pend && !local.armed && !local.giving) {
@@ -800,55 +866,61 @@ function gameHtml() {
     btns.push(`<button class="slapbtn${slapOn ? ' on' : ''}" data-act="slap" data-key="b:slap" aria-pressed="${slapOn ? 'true' : 'false'}">${slapOn ? 'Cancel slap' : 'Slap'}</button>`);
   }
 
+  const confirm = !over && local.confirmGringo && myTurn && !view.hasDrawn && view.phase === 'turns'
+    ? `<div class="confirm-back" data-key="confirm"><div class="confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+      <h2 id="confirm-title">Call Gringo?</h2>
+      <p id="confirm-text">Are you sure you want to call Gringo? Everyone else gets one last turn, then all cards are counted.</p>
+      <div class="confirm-btns"><button data-act="gringo-no" data-key="c:no">Not yet</button><button class="call" data-act="gringo-yes" data-key="c:yes">Call Gringo</button></div>
+    </div></div>` : '';
+
   const status = `<p class="hint${mode.slap ? ' slap' : mode.mine ? ' mine' : ''}" id="hint" data-key="hint" aria-live="polite"><span>${mode.hint}</span></p>`;
-  return `<div class="screen game n${view.players.length}${local.armed || local.giving ? ' slapping' : ''}" data-key="game" style="--me: var(--seat-${seatIndex(view.you)})">${barHtml(true, banner)}
-    <div class="table" data-key="table">${seats}${center}</div>
-    ${status}
+  const tail = over ? endPanelHtml(plan) : `${status}
     ${m ? seatHtml(m, 'bottom', mode) : ''}
-    <div class="actions" data-key="actions">${btns.join('')}</div></div>`;
+    <div class="actions" data-key="actions">${btns.join('')}</div>`;
+  return `<div class="screen game n${view.players.length}${local.armed || local.giving ? ' slapping' : ''}${over ? ` over${plan.settled ? ' settled' : ''}` : ''}" data-key="game" style="--me: var(--seat-${seatIndex(view.you)})">${barHtml(true, banner)}
+    <div class="table" data-key="table">${seats}${center}</div>
+    ${tail}${confirm}</div>`;
 }
 
-function rpsHtml() {
-  const r = view.rps;
-  const inIt = r.players.includes(view.you);
-  const last = r.last
-    ? `<p class="muted">Last round: ${Object.entries(r.last).map(([id, k]) => `${esc(nameOf(id))} ${esc(rpsName(k))}`).join(', ')}. Tied again.</p>` : '';
-  const picked = r.picks[view.you];
-  let ctl;
-  if (!inIt) ctl = `<p class="muted">The tied players are playing rock, paper, scissors: ${r.players.map(nameOf).map(esc).join(', ')}.</p>`;
-  else if (picked && picked !== 'hidden') ctl = `<p>You picked <b>${esc(rpsName(picked))}</b>. Waiting for the others.</p>`;
-  else {
-    ctl = `<div class="rps">
-      <button data-act="rps" data-pick="r"><span aria-hidden="true">✊</span>Rock</button>
-      <button data-act="rps" data-pick="p"><span aria-hidden="true">✋</span>Paper</button>
-      <button data-act="rps" data-pick="s"><span aria-hidden="true">✌️</span>Scissors</button></div>`;
+// What sits under the table once the game is over: the verdict, and the next step.
+function endPanelHtml() {
+  const m = me();
+  const mine = m ? seatHtml(m, 'bottom', { can: () => false }) : '';
+  let inner;
+  if (view.phase === 'rps') {
+    const r = view.rps;
+    const inIt = r.players.includes(view.you);
+    const last = r.last
+      ? `<p class="muted">Last round: ${Object.entries(r.last).map(([id, k]) => `${esc(nameOf(id))} ${esc(rpsName(k))}`).join(', ')}. Tied again.</p>` : '';
+    const picked = r.picks[view.you];
+    let ctl;
+    if (!inIt) ctl = `<p class="muted">The tied players are playing rock, paper, scissors: ${r.players.map(nameOf).map(esc).join(', ')}.</p>`;
+    else if (picked && picked !== 'hidden') ctl = `<p>You picked <b>${esc(rpsName(picked))}</b>. Waiting for the others.</p>`;
+    else {
+      ctl = `<div class="rps">
+        <button data-act="rps" data-pick="r"><span aria-hidden="true">✊</span>Rock</button>
+        <button data-act="rps" data-pick="p"><span aria-hidden="true">✋</span>Paper</button>
+        <button data-act="rps" data-pick="s"><span aria-hidden="true">✌️</span>Scissors</button></div>`;
+    }
+    inner = `<p class="eyebrow">Same points, same number of cards</p><h2>Rock, paper, scissors</h2>
+      <p>Round ${r.round + 1} between ${r.players.map(nameOf).map(esc).join(' and ')}.</p>${last}${ctl}`;
+    return `${mine}<section class="placard endpanel" id="rps" data-key="endpanel">${inner}</section>`;
   }
-  return `<div class="screen end" data-key="rps">${barHtml()}<section class="placard" id="rps">
-    <p class="eyebrow">Same points, same number of cards</p><h2>Rock, paper, scissors</h2>
-    <p>Round ${r.round + 1} between ${r.players.map(nameOf).map(esc).join(' and ')}.</p>${last}${ctl}</section>
-    <div class="results">${resultHands()}</div></div>`;
-}
-const rpsName = (k) => ({ r: 'rock', p: 'paper', s: 'scissors' }[k] || k);
-
-function resultHands() {
-  const totals = (view.result && view.result.totals) || {};
   const winners = (view.result && view.result.winners) || [];
-  let i = 0;
-  return view.players.map((p) => {
-    const win = winners.includes(p.id) && view.phase === 'done';
-    const forfeit = (view.abandonedBy || []).includes(p.id);
-    const cards = p.hand.map((e) => {
-      const d = i++;
-      if (e.empty) return `<span class="slot" data-owner="${esc(p.id)}" data-slot="${e.slot}"><span class="card gap"></span></span>`;
-      return `<span class="slot" data-owner="${esc(p.id)}" data-slot="${e.slot}" style="--i:${d}">${e.card ? cardHtml(e.card, { cls: 'dealt' }) : backHtml()}</span>`;
-    }).join('');
-    return `<section class="seat result-seat${win ? ' winner' : ''}" data-key="r:${esc(p.id)}" data-player="${esc(p.id)}" style="--seat: var(--seat-${seatIndex(p.id)})">
-      <div class="chip"><span class="dot" aria-hidden="true"></span><b class="name">${esc(p.name)}</b>${p.id === view.you ? '<span class="you">you</span>' : ''}
-      ${win ? '<span class="badge win">winner</span>' : ''}${forfeit ? '<span class="badge off">forfeit</span>' : p.connected ? '' : '<span class="badge off">offline</span>'}
-      <span class="total" style="--i:${i}">${totals[p.id] === undefined ? '' : `Total ${totals[p.id]}`}</span></div>
-      <div class="hand">${cards}</div></section>`;
-  }).join('');
+  const names = winners.map(nameOf).map(esc).join(' & ') || 'Nobody';
+  const youWon = winners.includes(view.you);
+  const burst = youWon
+    ? `<div class="burst" aria-hidden="true">${['♠', '♥', '♦', '♣', '♥', '♠', '♦', '♣', '♥', '♦', '♠', '♣'].map((g, k) => `<i class="${g === '♥' || g === '♦' ? 'red' : ''}" style="--k:${k}">${g}</i>`).join('')}</div>` : '';
+  const why = leftNote() || (view.result && view.result.decidedBy === 'cards' ? 'Tied on points, so the player with fewer cards wins.'
+    : tieBroken() ? 'Same points and same number of cards, settled by rock, paper, scissors.' : 'Lowest total wins. Red kings count −3, jokers 0.');
+  return `${mine}<section class="placard result endpanel${youWon ? ' won' : ''}" id="result" data-key="endpanel">${burst}
+    <p class="eyebrow">Game over</p>
+    <h2>${youWon ? 'You win!' : `${names} ${winners.length > 1 ? 'win' : 'wins'}`}</h2>
+    <p class="muted">${why}</p>
+    ${againHtml()}</section>`;
 }
+
+const rpsName = (k) => ({ r: 'rock', p: 'paper', s: 'scissors' }[k] || k);
 
 function tieBroken() {
   const r = view.result;
@@ -861,20 +933,6 @@ function leftNote() {
   const gone = (view.abandonedBy || []).map(nameOf).map(esc);
   if (gone.length === 0) return '';
   return `${gone.join(' & ')} left and forfeited, so the game ended.`;
-}
-
-function doneHtml() {
-  const winners = (view.result && view.result.winners) || [];
-  const names = winners.map(nameOf).map(esc).join(' & ') || 'Nobody';
-  const youWon = winners.includes(view.you);
-  const burst = youWon
-    ? `<div class="burst" aria-hidden="true">${['♠', '♥', '♦', '♣', '♥', '♠', '♦', '♣', '♥', '♦', '♠', '♣'].map((g, k) => `<i class="${g === '♥' || g === '♦' ? 'red' : ''}" style="--k:${k}">${g}</i>`).join('')}</div>` : '';
-  return `<div class="screen end" data-key="done">${barHtml()}<section class="placard result${youWon ? ' won' : ''}" id="result">${burst}
-    <p class="eyebrow">Game over</p>
-    <h2>${youWon ? 'You win!' : `${names} ${winners.length > 1 ? 'win' : 'wins'}`}</h2>
-    <p class="muted">${leftNote() || (view.result && view.result.decidedBy === 'cards' ? 'Tied on points, so the player with fewer cards wins.' : tieBroken() ? 'Same points and same number of cards, settled by rock, paper, scissors.' : 'Lowest total wins. Red kings count −3, jokers 0.')}</p></section>
-    <div class="results">${resultHands()}</div>
-    ${againHtml()}</div>`;
 }
 
 function againHtml() {
@@ -920,7 +978,13 @@ document.addEventListener('click', (ev) => {
     case 'peek': peek(); return;
     case 'draw': act('draw'); return;
     case 'discard': act('discard'); return;
-    case 'gringo': act('gringo'); return;
+    case 'gringo':
+      local = { ...local, confirmGringo: true };
+      render();
+      document.querySelector('.confirm [data-act=gringo-no]')?.focus();
+      return;
+    case 'gringo-no': local = { ...local, confirmGringo: false }; render(); return;
+    case 'gringo-yes': act('gringo'); return;
     case 'skippower': act('skipPower'); return;
     case 'kingkeep': act('confirmKing', { swap: false }); return;
     case 'kingswap': act('confirmKing', { swap: true }); return;
@@ -941,8 +1005,8 @@ document.addEventListener('submit', (ev) => {
 });
 
 document.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && (local.armed || local.giving || local.jMine !== null)) {
-    local = { ...local, armed: false, giving: null, jMine: null };
+  if (ev.key === 'Escape' && (local.armed || local.giving || local.jMine !== null || local.confirmGringo)) {
+    local = { ...local, armed: false, giving: null, jMine: null, confirmGringo: false };
     render();
   }
   if (ev.key === 'Enter' && ev.target.id === 'code') { ev.preventDefault(); doJoin(); }
@@ -1012,7 +1076,7 @@ function onSlot(ownerId, slot) {
     render();
     return;
   }
-  if (!inPlay()) return;
+  if (!playing()) return;
   const mode = currentMode();
   if (!entry || entry.empty || !mode.can(mine, owner, entry)) return;
   switch (mode.id) {

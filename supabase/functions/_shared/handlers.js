@@ -97,6 +97,11 @@ export async function handleRoom(db, body, deps = {}) {
       const fresh = seen[id] !== undefined && t - seen[id] < 2000;
       if (db.touch && (bye || !fresh || Object.keys(missing).length > 0)) await db.touch(code, missing, { [id]: mine });
       const next = { ...missing, ...seen, [id]: mine };
+      if (engine.endingOver(state, t, limits)) {
+        const res = await applyWithRetry(db, code, (st) => runEngine(() => engine.stamp(st, engine.settle(st, t, limits), t)));
+        await notify(code, res.version);
+        return ok({ view: engine.viewFor(res.state, id) });
+      }
       // Fewer than two people have been in this room for a while: clear it, with the caller inside.
       // The delete re-checks presence itself, so someone who arrived a moment ago keeps the room.
       if (!bye && db.purgeLonely && createdAt && engine.lonelyRoom({ ...seen, [id]: mine }, createdAt, t, limits.lonelyMs)) {
@@ -145,7 +150,7 @@ export async function handleRoom(db, body, deps = {}) {
 }
 
 export async function handleAct(db, body, deps = {}) {
-  const { notify = broadcast, now = Date.now } = deps;
+  const { notify = broadcast, now = Date.now, limits = engine.PRESENCE } = deps;
   return guarded(async () => {
     const code = cleanCode(body && body.code);
     const { action } = body;
@@ -154,7 +159,9 @@ export async function handleAct(db, body, deps = {}) {
     const res = await applyWithRetry(db, code, async (state, tokens) => {
       playerId = await playerIdForToken(tokens, body.token);
       return runEngine(() => {
-        const out = applyAction(state, playerId, action, args);
+        // A slap that arrives after the window closed finds the game already scored.
+        const current = engine.settle(state, now(), limits);
+        const out = applyAction(current, playerId, action, args);
         return { ...out, state: engine.stamp(state, out.state, now()) };
       });
     });
@@ -175,7 +182,7 @@ function applyAction(state, id, action, args) {
       } catch (e) {
         if (e.message !== 'no cards') throw e;
         // Deck and discard are both empty: end the game for this turn player instead of deadlocking.
-        return { state: state.phase === 'final' ? engine.finishGame(state) : engine.callGringo(state, id) };
+        return { state: state.phase === 'final' ? engine.endRound(state) : engine.callGringo(state, id) };
       }
     }
     case 'keep':

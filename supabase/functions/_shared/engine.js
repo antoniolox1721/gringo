@@ -255,7 +255,7 @@ export function removePlayer(state, id) {
 
 // How long a player may go without polling before the others treat them as gone, and how much of
 // that a closing tab leaves them (so a page reload survives but a closed tab ends the game fast).
-export const PRESENCE = { staleMs: 30000, byeGraceMs: 8000, idleMs: 4 * 60 * 1000, lonelyMs: 5 * 60 * 1000 };
+export const PRESENCE = { staleMs: 30000, byeGraceMs: 8000, idleMs: 4 * 60 * 1000, lonelyMs: 5 * 60 * 1000, endingMs: 3500 };
 
 // A room nobody shares is cleared: older than `lonelyMs` and fewer than two players have polled
 // within that time. `seen` maps player ids to their last heartbeat (epoch ms).
@@ -337,7 +337,7 @@ export function dropAbsent(state, ids) {
 // ---------------------------------------------------------------------------
 
 export function viewFor(state, playerId) {
-  const done = state.phase === 'done';
+  const done = state.phase === 'done' || state.phase === 'rps';
   const me = state.players.find((p) => p.id === playerId);
   const sees = (ownerId, slot) =>
     !!me && me.viewable.some((v) => v.ownerId === ownerId && v.slot === slot);
@@ -433,7 +433,7 @@ function advanceTurn(s) {
     const current = s.players[s.turn].id;
     s.finalLeft = s.finalLeft.filter((pid) => pid !== current && playerOf(s, pid).connected);
     if (s.finalLeft.length === 0) {
-      finishDraft(s);
+      beginEnding(s);
       return;
     }
     for (let step = 1; step <= n; step++) {
@@ -660,7 +660,7 @@ export function skipPower(state, id) {
 
 export function slap(state, id, args, rng = secureRandom) {
   requireActive(state, id);
-  if (state.phase !== 'turns' && state.phase !== 'final') throw new Error('game is not in play');
+  if (state.phase !== 'turns' && state.phase !== 'final' && state.phase !== 'ending') throw new Error('game is not in play');
   const me = playerOf(state, id);
   const owner = playerOf(state, args.ownerId);
   if (!Number.isInteger(args.slot) || args.slot < 0 || args.slot >= owner.hand.length) throw new Error('invalid slot');
@@ -696,6 +696,8 @@ export function slap(state, id, args, rng = secureRandom) {
       s.discardClaimed = true;
       checkZeroDraft(s, p.id);
       if (other) checkZeroDraft(s, o.id);
+      // A power card slapped onto the pile after the last turn has nobody left to use it.
+      if (s.phase === 'ending') s.pending = [];
     } else {
       const penalty = takeCard(s, rng);
       if (penalty) {
@@ -750,6 +752,35 @@ export function callGringo(state, id) {
     s.finalLeft = connectedPlayers(s).filter((x) => x.id !== id).map((x) => x.id);
     advanceTurn(s);
   });
+}
+
+// The last turn is over, but the scores are not settled yet: for a moment everyone can still slap.
+function beginEnding(s) {
+  // Nobody else is left to slap: score at once.
+  if (connectedPlayers(s).length < 2) {
+    finishDraft(s);
+    return;
+  }
+  clearAllViews(s);
+  s.drawn = null;
+  s.pending = [];
+  s.acted = false;
+  s.phase = 'ending';
+}
+
+export function endRound(state) {
+  return produce(state, beginEnding);
+}
+
+// True once the slap window after the last turn has run out. A state with no clock never waits.
+export function endingOver(state, now, limits = PRESENCE) {
+  if (state.phase !== 'ending') return false;
+  return typeof state.lastMoveAt !== 'number' || now - state.lastMoveAt >= limits.endingMs;
+}
+
+// Closes the slap window when its time is up: scores the hands (or starts the tiebreak).
+export function settle(state, now, limits = PRESENCE) {
+  return endingOver(state, now, limits) ? produce(state, finishDraft) : state;
 }
 
 function finishDraft(s) {
