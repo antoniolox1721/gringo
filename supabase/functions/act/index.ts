@@ -18,7 +18,9 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
   let body;
   try {
-    body = await req.json();
+    const text = await req.text();
+    if (text.length > 4096) return Response.json({ error: 'request too large' }, { status: 413, headers: cors });
+    body = JSON.parse(text);
   } catch {
     return Response.json({ error: 'invalid JSON' }, { status: 400, headers: cors });
   }

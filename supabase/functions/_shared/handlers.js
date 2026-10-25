@@ -44,7 +44,7 @@ async function runEngine(fn) {
 const ok = (body) => ({ status: 200, body });
 
 export async function handleRoom(db, body, deps = {}) {
-  const { notify = broadcast, uuid = () => crypto.randomUUID(), rng = engine.secureRandom, now = Date.now } = deps;
+  const { notify = broadcast, uuid = () => crypto.randomUUID(), rng = engine.secureRandom, now = Date.now, limits = engine.PRESENCE } = deps;
   return guarded(async () => {
     const action = body && body.action;
     if (action === 'create') {
@@ -86,18 +86,20 @@ export async function handleRoom(db, body, deps = {}) {
       const id = await playerIdForToken(tokens, body.token);
       const t = now();
       // Every poll is a heartbeat. A closing tab says bye and keeps only a short grace period.
-      const mine = body.bye === true ? t - (engine.PRESENCE.staleMs - engine.PRESENCE.byeGraceMs) : t;
+      const bye = body.bye === true;
+      const mine = bye ? t - (limits.staleMs - limits.byeGraceMs) : t;
       const missing = {};
       for (const p of state.players) if (seen[p.id] === undefined) missing[p.id] = t;
-      if (db.touch) await db.touch(code, missing, { [id]: mine });
+      // Polls closer than 2 s apart skip the write, so a spammed loop cannot hammer the database.
+      const fresh = seen[id] !== undefined && t - seen[id] < 2000;
+      if (db.touch && (bye || !fresh || Object.keys(missing).length > 0)) await db.touch(code, missing, { [id]: mine });
       const next = { ...missing, ...seen, [id]: mine };
-      const absent = state.players
-        .filter((p) => p.connected && p.id !== id && t - next[p.id] > engine.PRESENCE.staleMs)
-        .map((p) => p.id);
-      if (body.bye === true || absent.length === 0 || state.phase === 'done') {
+      if (bye || state.phase === 'done' || engine.absentPlayers(state, next, id, t, limits).length === 0) {
         return ok({ view: engine.viewFor(state, id) });
       }
-      const res = await applyWithRetry(db, code, (st) => runEngine(() => engine.dropAbsent(st, absent)));
+      const res = await applyWithRetry(db, code, (st) =>
+        runEngine(() => engine.dropAbsent(st, engine.absentPlayers(st, next, id, t, limits))),
+      );
       await notify(code, res.version);
       return ok({ view: engine.viewFor(res.state, id) });
     }
@@ -112,10 +114,15 @@ export async function handleRoom(db, body, deps = {}) {
     }
 
     if (action === 'start' || action === 'kick') {
+      if (action === 'kick') {
+        // Removing someone mid-game would let the host knock out whoever is winning.
+        const { state } = await loadGame(db, code);
+        if (state.phase !== 'lobby') throw new HttpError(403, 'players can only be removed in the lobby');
+      }
       const res = await applyWithRetry(db, code, async (state, tokens) => {
         const id = await playerIdForToken(tokens, body.token);
         return runEngine(() => {
-          if (action === 'start') return engine.startGame(state, id);
+          if (action === 'start') return engine.stamp(state, engine.startGame(state, id), now());
           if (id !== state.hostId) throw new HttpError(403, 'only the host can kick');
           const targetId = body.targetId;
           const next = engine.removePlayer(state, targetId);
@@ -132,7 +139,7 @@ export async function handleRoom(db, body, deps = {}) {
 }
 
 export async function handleAct(db, body, deps = {}) {
-  const { notify = broadcast } = deps;
+  const { notify = broadcast, now = Date.now } = deps;
   return guarded(async () => {
     const code = cleanCode(body && body.code);
     const { action } = body;
@@ -140,7 +147,10 @@ export async function handleAct(db, body, deps = {}) {
     let playerId;
     const res = await applyWithRetry(db, code, async (state, tokens) => {
       playerId = await playerIdForToken(tokens, body.token);
-      return runEngine(() => applyAction(state, playerId, action, args));
+      return runEngine(() => {
+        const out = applyAction(state, playerId, action, args);
+        return { ...out, state: engine.stamp(state, out.state, now()) };
+      });
     });
     await notify(code, res.version);
     return ok({ view: engine.viewFor(res.state, playerId), ...res.extra });
@@ -172,8 +182,12 @@ function applyAction(state, id, action, args) {
       const { state: next, seen } = engine.usePower(state, id, { ...args, ...nested, type: args.type });
       return seen === undefined ? { state: next } : { state: next, extra: { seen } };
     }
+    case 'kingLook': {
+      const { state: next, seen } = engine.kingLook(state, id, args.slot);
+      return { state: next, extra: { seen } };
+    }
     case 'confirmKing':
-      return { state: engine.confirmKing(state, id, args.swapWithSlot) };
+      return { state: engine.confirmKing(state, id, args.swap === true) };
     case 'skipPower':
       return { state: engine.skipPower(state, id) };
     case 'slap': {

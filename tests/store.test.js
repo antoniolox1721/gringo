@@ -228,7 +228,15 @@ test('a King reveal is in the response and the view until it is resolved', async
   assert.equal(k.status, 200);
   assert.equal(k.body.seen.uid, s.players[1].hand[1].uid);
   assert.equal(k.body.view.players[1].hand[1].card.uid, s.players[1].hand[1].uid);
-  const done = await handleAct(db, { code: 'ABCD', token: 'ta', action: 'confirmKing', args: { swapWithSlot: null } }, quiet);
+  const early = await handleAct(db, { code: 'ABCD', token: 'ta', action: 'confirmKing', args: { swap: true } }, quiet);
+  assert.equal(early.status, 400);
+  const look = await handleAct(db, { code: 'ABCD', token: 'ta', action: 'kingLook', args: { slot: 2 } }, quiet);
+  assert.equal(look.status, 200);
+  assert.equal(look.body.seen.uid, s.players[0].hand[2].uid);
+  assert.equal(look.body.view.players[0].hand[2].card.uid, s.players[0].hand[2].uid);
+  const spy = await handleRoom(db, { action: 'view', code: 'ABCD', token: 'tb' }, quiet);
+  assert.ok(spy.body.view.players.every((p) => p.hand.every((e) => e.card === undefined)));
+  const done = await handleAct(db, { code: 'ABCD', token: 'ta', action: 'confirmKing', args: { swap: false } }, quiet);
   assert.equal(done.status, 200);
   assert.deepEqual(done.body.view.viewable, []);
   assert.ok(done.body.view.players.every((p) => p.hand.every((e) => e.card === undefined)));

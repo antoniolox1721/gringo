@@ -207,7 +207,51 @@ export function removePlayer(state, id) {
 
 // How long a player may go without polling before the others treat them as gone, and how much of
 // that a closing tab leaves them (so a page reload survives but a closed tab ends the game fast).
-export const PRESENCE = { staleMs: 30000, byeGraceMs: 8000 };
+export const PRESENCE = { staleMs: 30000, byeGraceMs: 8000, idleMs: 4 * 60 * 1000 };
+
+// Who the game is waiting on right now: the players whose move is missing.
+export function blockers(state) {
+  if (state.phase === 'setup') return state.players.filter((p) => p.connected && p.seenSlots.length === 0).map((p) => p.id);
+  if (state.phase === 'turns' || state.phase === 'final') {
+    if (state.pending[0]) return [state.pending[0].by];
+    const cur = state.players[state.turn];
+    return cur ? [cur.id] : [];
+  }
+  if (state.phase === 'rps') return state.rps.players.filter((pid) => !state.rps.picks[pid]);
+  return [];
+}
+
+// Changes only when the awaited player makes progress. Slaps and penalties do not count, so they
+// cannot be used to keep an idle player's clock from running out.
+export function progressKey(s) {
+  const pend = s.pending[0];
+  return JSON.stringify([
+    s.phase, s.turn, s.drawn !== null, s.pending.length,
+    pend ? [pend.type, !!pend.target, !!pend.own] : null,
+    s.players.filter((p) => p.seenSlots.length > 0).length,
+    s.finalLeft ? s.finalLeft.length : null,
+    s.rps ? [s.rps.round, Object.keys(s.rps.picks).length] : null,
+  ]);
+}
+
+// Records when the game last moved on (kept on the state, outside the rules).
+export function stamp(prev, next, now) {
+  if (typeof next.lastMoveAt !== 'number' || progressKey(prev) !== progressKey(next)) return { ...next, lastMoveAt: now };
+  return next;
+}
+
+// Players the others should stop waiting for: silent too long, or holding up the game too long.
+export function absentPlayers(state, seen, callerId, now, limits = PRESENCE) {
+  const gone = new Set(
+    state.players
+      .filter((p) => p.connected && p.id !== callerId && now - (seen[p.id] ?? now) > limits.staleMs)
+      .map((p) => p.id),
+  );
+  if (typeof state.lastMoveAt === 'number' && now - state.lastMoveAt > limits.idleMs) {
+    for (const id of blockers(state)) gone.add(id);
+  }
+  return [...gone];
+}
 
 // Ends the game for everyone because `ids` walked away: a lobby just loses them, a game in progress
 // is scored at once among the players still here. Never leaves a game that cannot finish.
@@ -263,7 +307,7 @@ export function viewFor(state, playerId) {
     turnId: turnPlayer ? turnPlayer.id : null,
     hasDrawn: state.drawn !== null,
     drawn: isTurnPlayer && state.drawn ? structuredClone(state.drawn) : null,
-    pending: state.pending.map((x) => ({ type: x.type, by: x.by, revealed: !!x.target })),
+    pending: state.pending.map((x) => ({ type: x.type, by: x.by, revealed: !!x.target, lookedOwn: !!x.own })),
     finalLeft: state.finalLeft ? state.finalLeft.slice() : null,
     endedBy: state.endedBy ? { ...state.endedBy } : null,
     abandonedBy: state.abandonedBy ? state.abandonedBy.slice() : null,
@@ -505,18 +549,37 @@ export function usePower(state, id, args) {
   return seen === undefined ? { state: next } : { state: next, seen };
 }
 
-export function confirmKing(state, id, swapWithSlot) {
+// King, step 2: look at one of your own cards. The reveal lasts until confirmKing or skipPower.
+export function kingLook(state, id, slot) {
+  requireActive(state, id);
+  const pend = requirePending(state, id);
+  if (pend.type !== 'K' || !pend.target) throw new Error('look at an opponent card first');
+  if (pend.own) throw new Error('you already looked at one of your cards');
+  let seen;
+  const next = produce(state, (s) => {
+    const p = playerOf(s, id);
+    checkSlot(p, slot);
+    p.viewable.push({ ownerId: id, slot });
+    seen = structuredClone(p.hand[slot]);
+    s.pending[0].own = { slot };
+  });
+  return { state: next, seen };
+}
+
+// King, step 3: swap the two cards just seen, or leave both where they are.
+export function confirmKing(state, id, swap) {
   requireActive(state, id);
   const pend = requirePending(state, id);
   if (pend.type !== 'K' || !pend.target) throw new Error('no king reveal to confirm');
+  if (!pend.own) throw new Error('look at one of your own cards first');
   return produce(state, (s) => {
     const p = playerOf(s, id);
-    if (swapWithSlot !== null && swapWithSlot !== undefined) {
+    if (swap === true) {
       const t = playerOf(s, pend.target.ownerId);
       if (t.gringo || p.gringo) throw new Error('cannot swap with a player who called gringo');
-      checkSlot(p, swapWithSlot);
+      checkSlot(p, pend.own.slot);
       checkSlot(t, pend.target.slot);
-      swapCards(s, p, swapWithSlot, t, pend.target.slot);
+      swapCards(s, p, pend.own.slot, t, pend.target.slot);
     }
     clearView(p);
     finishPower(s);

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  usePower, confirmKing, skipPower, draw, viewFor, removePlayer, finishGame,
+  usePower, confirmKing, kingLook, skipPower, draw, viewFor, removePlayer, finishGame,
 } from '../supabase/functions/_shared/engine.js';
 import { c, stackedGame } from './helpers.js';
 
@@ -78,15 +78,34 @@ test('a Queen reveal is returned once and never persisted in the view', () => {
   assert.ok(v.players.every((p) => p.hand.every((e) => e.card === undefined)));
 });
 
-test('a King reveal stays viewable until confirmKing resolves it', () => {
-  const g = powerGame('K');
-  const target = g.players[1].hand[0];
+// A King after both looks: 'a' saw b's slot 0 and their own slot 3.
+function kingSeen(extra = {}) {
+  const g = powerGame('K', extra);
   const r = usePower(g, 'a', { type: 'K', targetId: 'b', slot: 0 });
+  const own = kingLook(r.state, 'a', 3);
+  return { g, r, own };
+}
+
+test('a King reveal stays viewable until confirmKing resolves it', () => {
+  const { g, r, own } = kingSeen();
+  const target = g.players[1].hand[0];
   assert.equal(r.seen.uid, target.uid);
   assert.deepEqual(viewFor(r.state, 'a').viewable, [{ ownerId: 'b', slot: 0 }]);
   assert.equal(viewFor(r.state, 'a').players[1].hand[0].card.uid, target.uid);
   assert.equal(viewFor(r.state, 'b').players[1].hand[0].card, undefined);
-  for (const s of [confirmKing(r.state, 'a', null), confirmKing(r.state, 'a', 2)]) {
+  assert.equal(own.seen.uid, g.players[0].hand[3].uid);
+  const mine = viewFor(own.state, 'a');
+  assert.deepEqual(mine.viewable, [{ ownerId: 'b', slot: 0 }, { ownerId: 'a', slot: 3 }]);
+  assert.equal(mine.players[0].hand[3].card.uid, g.players[0].hand[3].uid);
+  assert.equal(mine.pending[0].lookedOwn, true);
+  for (const who of ['b', 'c']) {
+    const other = viewFor(own.state, who);
+    assert.ok(other.players.every((p) => p.hand.every((e) => e.card === undefined)), `${who} sees no face`);
+    assert.deepEqual(other.viewable, []);
+    assert.equal(other.pending[0].own, undefined);
+    assert.equal(other.pending[0].target, undefined);
+  }
+  for (const s of [confirmKing(own.state, 'a', false), confirmKing(own.state, 'a', true)]) {
     assert.deepEqual(s.players[0].viewable, []);
     assert.ok(viewFor(s, 'a').players.every((p) => p.hand.every((e) => e.card === undefined)));
   }
@@ -123,37 +142,61 @@ test('a stale reveal is cleared on the revealed-to player\'s next action', () =>
   assert.deepEqual(state.players[0].viewable, []);
 });
 
-test('K reveal then decline leaves hands unchanged', () => {
-  const g = powerGame('K');
-  const r = usePower(g, 'a', { type: 'K', targetId: 'b', slot: 0 });
-  assert.equal(r.seen.uid, g.players[1].hand[0].uid);
+test('K look at both, then decline leaves hands unchanged', () => {
+  const { g, r, own } = kingSeen();
   assert.equal(r.state.pending.length, 1);
-  assert.equal(r.state.turn, 0);
-  const s = confirmKing(r.state, 'a', null);
+  assert.equal(own.state.turn, 0);
+  const s = confirmKing(own.state, 'a', false);
   assert.deepEqual(s.players.map((p) => p.hand), g.players.map((p) => p.hand));
   assert.deepEqual(s.pending, []);
   assert.equal(s.turn, 1);
 });
 
-test('K reveal then swap exchanges', () => {
-  const g = powerGame('K');
-  const r = usePower(g, 'a', { type: 'K', targetId: 'b', slot: 0 });
-  const s = confirmKing(r.state, 'a', 3);
+test('K look at both, then swap exchanges exactly the two cards seen', () => {
+  const { g, own } = kingSeen();
+  const s = confirmKing(own.state, 'a', true);
   assert.equal(s.players[0].hand[3].uid, g.players[1].hand[0].uid);
   assert.equal(s.players[1].hand[0].uid, g.players[0].hand[3].uid);
+  assert.deepEqual(s.players[0].hand.slice(0, 3), g.players[0].hand.slice(0, 3));
   assert.equal(s.turn, 1);
+});
+
+test('K must look at an own card before deciding, and only once', () => {
+  const g = powerGame('K');
+  const r = usePower(g, 'a', { type: 'K', targetId: 'b', slot: 0 });
+  assert.throws(() => confirmKing(r.state, 'a', true), /own cards first/);
+  assert.throws(() => confirmKing(r.state, 'a', false), /own cards first/);
+  assert.throws(() => kingLook(g, 'a', 0), /opponent card first/);
+  assert.throws(() => kingLook(r.state, 'a', 9), /invalid slot/);
+  const own = kingLook(r.state, 'a', 1);
+  assert.throws(() => kingLook(own.state, 'a', 2), /already looked/);
+  assert.throws(() => kingLook(own.state, 'b', 0), /not your|power/);
+});
+
+test('K cannot look at an empty own slot', () => {
+  const g = powerGame('K');
+  g.players[0].hand[2] = null;
+  const r = usePower(g, 'a', { type: 'K', targetId: 'b', slot: 0 });
+  assert.throws(() => kingLook(r.state, 'a', 2), /empty/);
 });
 
 test('K cannot swap with a gringo caller but may still look and decline', () => {
   const g = powerGame('K');
   g.players[1].gringo = true;
   const r = usePower(g, 'a', { type: 'K', targetId: 'b', slot: 0 });
-  assert.throws(() => confirmKing(r.state, 'a', 3), /gringo/);
-  assert.equal(confirmKing(r.state, 'a', null).turn, 1);
+  const own = kingLook(r.state, 'a', 3);
+  assert.throws(() => confirmKing(own.state, 'a', true), /gringo/);
+  assert.equal(confirmKing(own.state, 'a', false).turn, 1);
 });
 
 test('confirmKing needs a K reveal first', () => {
-  assert.throws(() => confirmKing(powerGame('K'), 'a', null), /reveal/);
+  assert.throws(() => confirmKing(powerGame('K'), 'a', false), /reveal/);
+});
+
+test('a King reveal of an own card is cleared when the power is skipped or its owner leaves', () => {
+  const { own } = kingSeen();
+  assert.deepEqual(skipPower(own.state, 'a').players[0].viewable, []);
+  assert.deepEqual(removePlayer(own.state, 'a').players[0].viewable, []);
 });
 
 test('K must look at another player', () => {

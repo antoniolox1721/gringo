@@ -27,6 +27,7 @@ const TEST_MODE = process.env.MOCK_TEST === '1';
 // Presence: MOCK_STALE_MS shortens the window after which a silent player counts as gone.
 const STALE_MS = Number(process.env.MOCK_STALE_MS) || engine.PRESENCE.staleMs;
 const BYE_GRACE_MS = Math.min(engine.PRESENCE.byeGraceMs, STALE_MS / 3);
+const LIMITS = { staleMs: STALE_MS, byeGraceMs: BYE_GRACE_MS, idleMs: Number(process.env.MOCK_IDLE_MS) || engine.PRESENCE.idleMs };
 
 const rooms = new Map(); // code -> { state, tokens: Map(token -> playerId) }
 
@@ -94,13 +95,14 @@ function roomEndpoint(body) {
     case 'start': {
       const room = roomOf(body.code);
       const id = auth(room, body.token);
-      room.state = wrap(() => engine.startGame(room.state, id, RNG));
+      room.state = wrap(() => engine.stamp(room.state, engine.startGame(room.state, id, RNG), Date.now()));
       return { ok: true };
     }
     case 'kick': {
       const room = roomOf(body.code);
       const id = auth(room, body.token);
       if (id !== room.state.hostId) throw new HttpError(400, 'only the host can kick');
+      if (room.state.phase !== 'lobby') throw new HttpError(403, 'players can only be removed in the lobby');
       if (body.targetId === id) throw new HttpError(400, 'cannot kick yourself');
       room.state = wrap(() => engine.removePlayer(room.state, body.targetId));
       for (const [t, pid] of room.tokens) if (pid === body.targetId && room.state.phase === 'lobby') room.tokens.delete(t);
@@ -112,9 +114,7 @@ function roomEndpoint(body) {
       const t = Date.now();
       room.seen[id] = body.bye === true ? t - (STALE_MS - BYE_GRACE_MS) : t;
       for (const p of room.state.players) if (room.seen[p.id] === undefined) room.seen[p.id] = t;
-      const absent = room.state.players
-        .filter((p) => p.connected && p.id !== id && t - room.seen[p.id] > STALE_MS)
-        .map((p) => p.id);
+      const absent = engine.absentPlayers(room.state, room.seen, id, t, LIMITS);
       if (body.bye !== true && absent.length) room.state = wrap(() => engine.dropAbsent(room.state, absent));
       return { view: engine.viewFor(room.state, id) };
     }
@@ -150,7 +150,8 @@ function actEndpoint(body) {
         if (r.seen !== undefined) extra = { seen: r.seen };
         break;
       }
-      case 'confirmKing': next = engine.confirmKing(s, id, a.swapWithSlot ?? null); break;
+      case 'kingLook': { const r = engine.kingLook(s, id, a.slot); next = r.state; extra = { seen: r.seen }; break; }
+      case 'confirmKing': next = engine.confirmKing(s, id, a.swap === true); break;
       case 'skipPower': next = engine.skipPower(s, id); break;
       case 'slap': { const r = engine.slap(s, id, a, RNG); next = r.state; extra = { ok: r.ok }; break; }
       case 'gringo': next = engine.callGringo(s, id); break;
@@ -158,8 +159,8 @@ function actEndpoint(body) {
       default: throw new Error('unknown action');
     }
   });
-  room.state = next;
-  return { view: engine.viewFor(next, id), ...extra };
+  room.state = engine.stamp(s, next, Date.now());
+  return { view: engine.viewFor(room.state, id), ...extra };
 }
 
 // Test-only (MOCK_TEST=1): overwrite hands/discard/deck with named cards, e.g. '9S', '10H', 'JOKER'.

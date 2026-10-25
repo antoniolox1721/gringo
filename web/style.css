@@ -547,6 +547,51 @@ input:focus-visible { outline: none; border-color: var(--focus); }
   .hint { font-size: 1rem; }
 }
 
+/* ---- power card impact ---- */
+.power-fx { --pc: #ffd27a; position: fixed; width: 0; height: 0; z-index: 60; pointer-events: none; }
+.power-fx.p-J { --pc: #5ec8ff; }
+.power-fx.p-Q { --pc: #d58cff; }
+.power-fx.p-K { --pc: #ffd27a; }
+.power-fx i, .power-fx b, .power-fx small { position: absolute; left: 0; top: 0; display: block; }
+.power-fx .flash {
+  position: fixed; inset: 0; width: auto; height: auto; margin: 0;
+  background: radial-gradient(circle at var(--cx) var(--cy), color-mix(in srgb, var(--pc) 55%, #fff) 0, transparent 60%);
+  animation: fx-flash 420ms ease-out forwards;
+}
+.power-fx .ring {
+  width: calc(var(--w) * 1.1); height: calc(var(--w) * 1.1); margin: calc(var(--w) * -.55) 0 0 calc(var(--w) * -.55);
+  border: 5px solid var(--pc); border-radius: 50%; animation: fx-ring 700ms cubic-bezier(.1, .7, .3, 1) forwards;
+}
+.power-fx .ring.r2 { border-width: 2px; animation-delay: 110ms; opacity: 0; }
+.power-fx .rays {
+  width: calc(var(--w) * 4); height: calc(var(--w) * 4); margin: calc(var(--w) * -2) 0 0 calc(var(--w) * -2); border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, var(--pc) 0 5deg, transparent 5deg 20deg);
+  -webkit-mask-image: radial-gradient(circle, transparent 18%, #000 28%, transparent 70%);
+  mask-image: radial-gradient(circle, transparent 18%, #000 28%, transparent 70%);
+  animation: fx-rays 800ms ease-out forwards;
+}
+.power-fx b {
+  transform: translate(-50%, -50%) rotate(-6deg); white-space: nowrap; padding: 4px 16px 6px; border-radius: 10px;
+  font: italic 800 clamp(1.7rem, 8vw, 2.6rem)/1 var(--serif); letter-spacing: .02em; color: var(--pc);
+  background: rgba(10, 18, 16, .82); border: 2px solid var(--pc); text-shadow: 0 0 14px var(--pc);
+  animation: fx-stamp 1400ms cubic-bezier(.2, 1.4, .4, 1) forwards;
+}
+.power-fx small {
+  transform: translate(-50%, 1.9rem); white-space: nowrap; font-size: .9rem; font-weight: 650; color: #fff;
+  text-shadow: 0 1px 4px #000; animation: fx-sub 1400ms ease-out forwards;
+}
+@keyframes fx-flash { 0% { opacity: .9; } 100% { opacity: 0; } }
+@keyframes fx-ring { 0% { transform: scale(.5); opacity: 1; } 100% { transform: scale(3.2); opacity: 0; } }
+@keyframes fx-rays { 0% { transform: scale(.4) rotate(0deg); opacity: 1; } 100% { transform: scale(1.1) rotate(25deg); opacity: 0; } }
+@keyframes fx-stamp {
+  0% { transform: translate(-50%, -50%) rotate(-6deg) scale(2.6); opacity: 0; }
+  18% { transform: translate(-50%, -50%) rotate(-6deg) scale(.94); opacity: 1; }
+  28% { transform: translate(-50%, -50%) rotate(-6deg) scale(1); }
+  80% { transform: translate(-50%, -50%) rotate(-6deg) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -60%) rotate(-6deg) scale(1); opacity: 0; }
+}
+@keyframes fx-sub { 0%, 20% { opacity: 0; } 35%, 80% { opacity: 1; } 100% { opacity: 0; } }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

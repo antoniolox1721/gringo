@@ -10,6 +10,7 @@ const TONES = {
   slap: [[920, 0.035, 'square'], [460, 0.06, 'triangle']],
   miss: [[240, 0.08, 'sawtooth'], [180, 0.1, 'sine']],
   turn: [[660, 0.06, 'sine'], [990, 0.08, 'sine']],
+  power: [[110, 0.09, 'sawtooth'], [220, 0.07, 'square'], [880, 0.09, 'triangle'], [1320, 0.12, 'triangle']],
   flip: [[1250, 0.025, 'triangle']],
   call: [[523, 0.07, 'triangle'], [659, 0.07, 'triangle'], [784, 0.1, 'triangle']],
 };

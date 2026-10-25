@@ -188,7 +188,7 @@ test('a player who closes the tab ends the game for the others', async ({ browse
   await guest.context.close();
   await expect(host.page.locator('#result')).toBeVisible({ timeout: 15_000 });
   await expect(host.page.locator('#result')).toContainText('You win!');
-  await expect(host.page.locator('#result')).toContainText('Gus left, so the game ended');
+  await expect(host.page.locator('#result')).toContainText('Gus left and forfeited, so the game ended');
   await noHScroll(host.page);
   expect(errors).toEqual([]);
   await host.context.close();
@@ -203,7 +203,7 @@ test('the Leave button asks twice, then ends the game for the other player', asy
   await expect(leave).toHaveText('End game?');
   await leave.click();
   await expect(guest.page.locator('input#name')).toBeVisible();
-  await expect(host.page.locator('#result')).toContainText('Gus left, so the game ended', { timeout: 10_000 });
+  await expect(host.page.locator('#result')).toContainText('Gus left and forfeited, so the game ended', { timeout: 10_000 });
   await expect(host.page.locator('#result')).toContainText('You win!');
   await expect(host.page.locator('[data-act=exit]')).toHaveCount(0);
   expect(errors).toEqual([]);
@@ -218,6 +218,45 @@ test('reloading a page does not count as leaving', async ({ browser, baseURL, re
   await expect(guest.page.locator('#hint')).toBeVisible();
   await host.page.waitForTimeout(3000);
   await expect(host.page.locator('#result')).toHaveCount(0);
+  expect(errors).toEqual([]);
+  await host.context.close();
+  await guest.context.close();
+});
+
+test('King: look at an opponent card and one of your own, then decide; power cards slam onto the pile', async ({ browser, baseURL, request }) => {
+  const errors = [];
+  const { host, guest, hs, gs } = await setupGame(browser, baseURL, request, errors, {
+    hands: { 0: ['5S', '6S', '7S', '8S'], 1: ['9H', '10H', '2C', '3C'] },
+    discard: ['4D'],
+    deck: ['KS', '5D', '6D', '7D', '8D', 'AC', 'AD', 'AH'],
+  });
+  await host.page.click('[data-act=draw]');
+  await expect(host.page.locator('#drawn')).toContainText('K♠');
+  await host.page.click('[data-act=discard]');
+  // Both players see the impact frame with the power's name.
+  for (const p of [host.page, guest.page]) await expect(p.locator('.power-fx b')).toHaveText('King');
+  await expect(host.page.locator('#hint')).toContainText('tap an opponent card');
+  await expect(host.page.locator('[data-act=kingswap]')).toHaveCount(0);
+
+  await slot(host.page, gs.playerId, 0).click();
+  await expect(slot(host.page, gs.playerId, 0)).toContainText('9♥');
+  await expect(host.page.locator('#hint')).toContainText('one of YOUR cards');
+  await expect(host.page.locator('[data-act=kingswap]')).toHaveCount(0);
+  await slot(host.page, hs.playerId, 2).click();
+  await expect(slot(host.page, hs.playerId, 2)).toContainText('7♠');
+  // Both stay face up while deciding, and survive a reload.
+  await host.page.reload();
+  await expect(slot(host.page, gs.playerId, 0)).toContainText('9♥');
+  await expect(slot(host.page, hs.playerId, 2)).toContainText('7♠');
+  await expect(host.page.locator('#hint')).toContainText('swap the two cards you saw');
+  // The other player sees neither face.
+  const guestHtml = await guest.page.content();
+  expect(guestHtml).not.toContain('7♠');
+  expect(guestHtml).not.toContain('9♥');
+
+  await host.page.click('[data-act=kingkeep]');
+  await expect(guest.page.locator('#hint')).toContainText('Your turn');
+  await expect(host.page.locator('.slot .face')).toHaveCount(0);
   expect(errors).toEqual([]);
   await host.context.close();
   await guest.context.close();

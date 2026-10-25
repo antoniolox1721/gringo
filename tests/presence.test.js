@@ -61,6 +61,21 @@ test('dropAbsent ends every phase of a game at once, however the others are plac
   }
 });
 
+test('a leaver forfeits even with the lowest score', () => {
+  const g = stackedGame({
+    players: ['p0', 'p1', 'p2'],
+    hands: [[c('9'), c('9')], [c('A'), c('2')], [c('5'), c('6')]],
+  });
+  const best = engine.dropAbsent(g, ['p1']);
+  assert.equal(best.result.totals.p1, 3, 'p1 had the lowest total');
+  assert.deepEqual(best.result.winners, ['p2']);
+  const tied = stackedGame({
+    players: ['p0', 'p1', 'p2'],
+    hands: [[c('5'), c('6')], [c('A')], [c('4'), c('7')]],
+  });
+  assert.deepEqual(engine.dropAbsent(tied, ['p1']).result.winners.sort(), ['p0', 'p2']);
+});
+
 test('the last player standing wins when everyone else leaves', () => {
   const next = engine.dropAbsent(stacked(), ['p0', 'p2']);
   assert.deepEqual(next.result.winners, ['p1']);
@@ -217,4 +232,122 @@ test('a player who never polled still goes stale, and concurrent polls keep each
   const r = await poll(db, 'p0', now);
   assert.equal(r.body.view.phase, 'done');
   assert.deepEqual(r.body.view.abandonedBy, ['p2'], 'only the player who never polled is gone');
+});
+
+// ---- idle players and abuse limits ---------------------------------------------
+const { idleMs } = engine.PRESENCE;
+
+// Time passes with everybody's tab open and polling (nobody is stale), but nobody plays.
+async function idleFor(db, ids, now, ms) {
+  for (let left = ms; left > 0; left -= 10000) {
+    now.advance(Math.min(10000, left));
+    for (const id of ids) await poll(db, id, now);
+  }
+}
+
+function started(state, now) {
+  return { ...state, lastMoveAt: now() };
+}
+
+test('blockers names exactly who the game is waiting for', () => {
+  const s = engine.startGame(lobby(3), 'p0', rng);
+  assert.deepEqual(engine.blockers(s).sort(), ['p0', 'p1', 'p2']);
+  assert.deepEqual(engine.blockers(engine.peekSetup(s, 'p1', [0, 1]).state).sort(), ['p0', 'p2']);
+  assert.deepEqual(engine.blockers(stacked()), ['p0']);
+  assert.deepEqual(engine.blockers({ ...stacked(), pending: [{ type: 'Q', by: 'p2' }] }), ['p2']);
+  const rps = phases().rps;
+  assert.equal(rps.phase, 'rps');
+  assert.deepEqual(engine.blockers(rps).sort(), rps.rps.players.slice().sort());
+  assert.deepEqual(engine.blockers(engine.dropAbsent(stacked(), ['p0'])), []);
+  assert.deepEqual(engine.blockers(lobby()), []);
+});
+
+test('a player who keeps the tab open but never moves forfeits after the idle window', async () => {
+  const now = clock();
+  const db = await room(started(stacked(3), now));
+  for (const id of ['p0', 'p1', 'p2']) await poll(db, id, now);
+  // Everybody keeps polling; nobody plays. p0 holds the turn.
+  for (let i = 0; i < idleMs / 5000 - 2; i++) {
+    now.advance(5000);
+    for (const id of ['p0', 'p1', 'p2']) await poll(db, id, now);
+  }
+  assert.equal((await poll(db, 'p1', now)).body.view.phase, 'turns', 'still within the window');
+  now.advance(15000);
+  const r = await poll(db, 'p1', now);
+  assert.equal(r.body.view.phase, 'done');
+  assert.deepEqual(r.body.view.abandonedBy, ['p0']);
+  assert.ok(!r.body.view.result.winners.includes('p0'));
+});
+
+test('slaps and penalties do not reset the idle clock; real progress does', async () => {
+  const now = clock();
+  const db = await room(started(stacked(2), now));
+  await poll(db, 'p0', now);
+  await poll(db, 'p1', now);
+  await idleFor(db, ['p0', 'p1'], now, idleMs - 20000);
+  const { handleAct } = await import('../supabase/functions/_shared/handlers.js');
+  const slap = await handleAct(db, { code: 'ABCD', token: 'tp1', action: 'slap', args: { ownerId: 'p1', slot: 0 } }, { ...quiet, now });
+  assert.equal(slap.status, 200, JSON.stringify(slap.body));
+  const before = db.rows.get('ABCD').state.lastMoveAt;
+  assert.equal(before, 1_000_000, 'a slap left the clock alone');
+  await idleFor(db, ['p0'], now, 25000);
+  const r = await poll(db, 'p1', now);
+  assert.equal(r.body.view.phase, 'done', 'idle p0 still forfeits after a slap by p1');
+
+  const db2 = await room(started(stacked(2), now));
+  await idleFor(db2, ['p0', 'p1'], now, idleMs - 20000);
+  await handleAct(db2, { code: 'ABCD', token: 'tp0', action: 'draw', args: {} }, { ...quiet, now });
+  assert.equal(db2.rows.get('ABCD').state.lastMoveAt, now(), 'a draw restarts the clock');
+  await idleFor(db2, ['p0', 'p1'], now, 25000);
+  assert.equal((await poll(db2, 'p1', now)).body.view.phase, 'turns');
+});
+
+test('idle setup forfeits only the players who never peeked', async () => {
+  const now = clock();
+  let s = engine.startGame(lobby(3), 'p0', rng);
+  s = engine.peekSetup(s, 'p1', [0, 1]).state;
+  const db = await room(started(s, now));
+  now.advance(idleMs + 1000);
+  for (const id of ['p0', 'p1', 'p2']) await poll(db, id, now);
+  const st = db.rows.get('ABCD').state;
+  assert.equal(st.phase, 'done');
+  assert.deepEqual(st.abandonedBy.sort(), ['p0', 'p2']);
+  assert.deepEqual(st.result.winners, ['p1']);
+});
+
+test('a state without lastMoveAt is never idle-swept', async () => {
+  const db = await room(stacked(2));
+  const now = clock();
+  for (let i = 0; i < 36; i++) {
+    await poll(db, 'p0', now);
+    await poll(db, 'p1', now);
+    now.advance(20000);
+  }
+  assert.equal((await poll(db, 'p0', now)).body.view.phase, 'turns');
+});
+
+test('the host cannot remove players once the game has started', async () => {
+  const db = await room(stacked(3));
+  const r = await handleRoom(db, { action: 'kick', code: 'ABCD', token: 'tp0', targetId: 'p1' }, quiet);
+  assert.equal(r.status, 403);
+  assert.equal(db.rows.get('ABCD').state.players[1].connected, true);
+  const db2 = await room(lobby(3));
+  assert.equal((await handleRoom(db2, { action: 'kick', code: 'ABCD', token: 'tp0', targetId: 'p1' }, quiet)).status, 200);
+});
+
+test('polls closer than two seconds apart skip the database write', async () => {
+  const db = await room(stacked(2));
+  let writes = 0;
+  const touch = db.touch;
+  db.touch = async (...a) => { writes += 1; return touch(...a); };
+  const now = clock();
+  await poll(db, 'p0', now);
+  const first = writes;
+  now.advance(500);
+  await poll(db, 'p0', now);
+  await poll(db, 'p0', now);
+  assert.equal(writes, first, 'rapid polls wrote nothing');
+  now.advance(2000);
+  await poll(db, 'p0', now);
+  assert.equal(writes, first + 1);
 });

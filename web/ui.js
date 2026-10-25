@@ -31,7 +31,7 @@ const ghosts = new Set(); // fx keys hidden while a flying card is on its way th
 let pileHold = null; // what the pile showed before a card started flying onto it
 
 function freshLocal() {
-  return { armed: false, giving: null, peekSel: [], jMine: null, kingSwap: false, kickArm: null, leaveArm: false };
+  return { armed: false, giving: null, peekSel: [], jMine: null, kickArm: null, leaveArm: false };
 }
 
 // ---- storage (always guarded) ---------------------------------------------
@@ -253,6 +253,13 @@ function planFlights(p, v) {
     const kb = `slot:${b.pid}:${b.slot}`;
     out.push({ from: ka, to: kb, sound: 'land' }, { from: kb, to: ka, delay: 40, arc: -1 });
   }
+  // A discarded J/Q/K that just started its power gets the impact treatment when it lands.
+  const np = v.pending[0];
+  const pp = p.pending[0];
+  if (np && top && np.type === top.rank && !(pp && pp.type === np.type && pp.by === np.by)) {
+    const onPile = out.filter((f) => f.to === 'pile' && !f.impact).pop();
+    if (onPile) onPile.power = np.type;
+  }
   return out;
 }
 
@@ -280,11 +287,35 @@ function land(f, silent) {
     blip('slap');
     motion.impact($app.querySelector('#discard .card'));
   }
+  if (f.power) powerBurst(f.power);
   if (f.penalty) motion.shake($app.querySelector(`.seat[data-player="${CSS.escape(f.penalty)}"] .hand`));
 }
 
+// Impact frame for a power card hitting the pile: flash, shockwave rings, rays and a stamped name.
+const POWER_FX = { J: ['Jack', 'Blind swap'], Q: ['Queen', 'Look at any card'], K: ['King', 'Look at two, then swap'] };
+function powerBurst(rank) {
+  const card = $app.querySelector('#discard .card');
+  if (!card) return;
+  blip('power');
+  buzz([25, 35, 25]);
+  motion.impact(card);
+  motion.shake($app.querySelector('.table'));
+  if (motion.reduced()) return;
+  const r = card.getBoundingClientRect();
+  const [name, sub] = POWER_FX[rank];
+  const fx = document.createElement('div');
+  fx.className = `power-fx p-${rank}`;
+  fx.setAttribute('aria-hidden', 'true');
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  fx.style.cssText = `left:${cx}px;top:${cy}px;--w:${r.width}px;--cx:${cx}px;--cy:${cy}px`;
+  fx.innerHTML = `<i class="flash"></i><i class="ring"></i><i class="ring r2"></i><i class="rays"></i><b>${name}</b><small>${sub}</small>`;
+  document.body.appendChild(fx);
+  setTimeout(() => fx.remove(), 1500);
+}
+
 // Toasts, callouts, rings and haptics for the change from p to v.
-const POWER_TEXT = { J: 'a Jack: blind swap', Q: 'a Queen: look at any card', K: 'a King: look, then swap or not' };
+const POWER_TEXT = { J: 'a Jack: blind swap', Q: 'a Queen: look at any card', K: 'a King: look at two cards, then swap or not' };
 function announce(p, v) {
   const parts = [];
   if (atTable() || v.phase === 'done' || v.phase === 'rps') {
@@ -420,6 +451,14 @@ async function power(type, targetId, slot, extra = {}) {
   showReveals([{ key, card: resp.seen, ver: slotVer(view, key) }], type === 'K' ? 'K' : 'peek');
 }
 
+// King step 2: the player's own card shows face up beside the opponent's until they decide.
+async function kingLook(slot) {
+  const resp = await act('kingLook', { slot });
+  if (!resp || !resp.seen) return;
+  const key = `slot:${view.you}:${slot}`;
+  showReveals([{ key, card: resp.seen, ver: slotVer(view, key) }], 'K');
+}
+
 function startSession(s) {
   session = s;
   saveSession(s);
@@ -524,7 +563,7 @@ function homeHtml() {
       <li>Everyone gets 4 face-down cards and peeks at 2 of them, once.</li>
       <li>On your turn draw a card, then swap it into one of your spots or discard it.</li>
       <li>Anyone may slap a card that matches the top of the pile. Wrong slaps cost a card.</li>
-      <li>Discarding a Jack swaps two cards blind, a Queen lets you look at one, a King lets you look and then swap.</li>
+      <li>Discarding a Jack swaps two cards blind, a Queen lets you look at one, a King lets you look at one opponent card and one of yours, then swap those two or not.</li>
       <li>Call Gringo before drawing when you think you are lowest. Everyone else plays one more turn.</li>
       <li>Aces are 1, faces 10, red kings −3, jokers 0. Lowest total wins.</li>
     </ol></details>
@@ -604,8 +643,8 @@ function currentMode() {
     }
     if (pend.type === 'Q') return { id: 'Q', mine: true, hint: '<b>Queen:</b> tap any card to look at it.', can: () => true };
     if (!pend.revealed) return { id: 'K1', mine: true, hint: '<b>King:</b> tap an opponent card to look at it.', can: (mine) => !mine };
-    if (local.kingSwap) return { id: 'K2', mine: true, hint: '<b>King:</b> tap YOUR card to swap into that spot.', can: (mine) => mine };
-    return { id: 'K3', mine: true, hint: '<b>King:</b> swap that card with one of yours, or leave it.', can: () => false };
+    if (!pend.lookedOwn) return { id: 'K2', mine: true, hint: '<b>King:</b> now tap one of YOUR cards to look at it.', can: (mine) => mine };
+    return { id: 'K3', mine: true, hint: '<b>King:</b> swap the two cards you saw, or leave them where they are.', can: () => false };
   }
   if (pend) return { id: 'wait', hint: `${esc(nameOf(pend.by))} is using a ${esc(RANK_NAME[pend.type] || pend.type)}.`, can: () => false };
   if (myTurn && view.hasDrawn) return { id: 'keep', mine: true, hint: '<b>Your turn:</b> tap one of your cards to swap, or discard.', can: (mine) => mine };
@@ -639,7 +678,6 @@ function slotHtml(p, e, mode) {
 
 function seatHtml(p, pos, mode) {
   const isMe = p.id === view.you;
-  const isHost = view.hostId === view.you;
   const rot = pos === 'left' ? 90 : pos === 'right' ? -90 : 0;
   const active = (inPlay() && p.id === view.turnId) || (view.phase === 'setup' && p.connected && !p.ready);
   const n = live(p);
@@ -654,7 +692,7 @@ function seatHtml(p, pos, mode) {
   return `<section class="seat pos-${pos}${isMe ? ' me' : ''}${active ? ' active' : ''}${p.connected ? '' : ' offline'}" data-key="seat:${esc(p.id)}" data-player="${esc(p.id)}" data-rot="${rot}" style="--seat: var(--seat-${seatIndex(p.id)}); --n: ${p.hand.length}">
     <i class="ring" aria-hidden="true"></i>
     <div class="chip"><span class="dot" aria-hidden="true"></span><b class="name">${esc(p.name)}</b>${isMe ? '<span class="you">you</span>' : ''}
-      <span class="count" aria-label="${n} cards">${n}</span>${badges}${isHost && !isMe ? kickHtml(p, true) : ''}</div>
+      <span class="count" aria-label="${n} cards">${n}</span>${badges}</div>
     <div class="hand">${p.hand.map((e) => slotHtml(p, e, mode)).join('')}</div>${held}
   </section>`;
 }
@@ -707,9 +745,9 @@ function gameHtml() {
       }
     }
     if (pend && pend.by === view.you && !local.armed && !local.giving) {
-      if (pend.type === 'K' && pend.revealed) {
-        if (!local.kingSwap) btns.push(b('kingswap', 'Swap', 'primary'));
-        btns.push(b('kingkeep', 'Leave it'));
+      if (pend.type === 'K' && pend.lookedOwn) {
+        btns.push(b('kingswap', 'Swap them', 'primary'));
+        btns.push(b('kingkeep', 'Leave them'));
       } else btns.push(b('skippower', 'Skip power'));
     }
     const slapOn = local.armed || local.giving;
@@ -752,6 +790,7 @@ function resultHands() {
   let i = 0;
   return view.players.map((p) => {
     const win = winners.includes(p.id) && view.phase === 'done';
+    const forfeit = (view.abandonedBy || []).includes(p.id);
     const cards = p.hand.map((e) => {
       const d = i++;
       if (e.empty) return `<span class="slot" data-owner="${esc(p.id)}" data-slot="${e.slot}"><span class="card gap"></span></span>`;
@@ -759,7 +798,7 @@ function resultHands() {
     }).join('');
     return `<section class="seat result-seat${win ? ' winner' : ''}" data-key="r:${esc(p.id)}" data-player="${esc(p.id)}" style="--seat: var(--seat-${seatIndex(p.id)})">
       <div class="chip"><span class="dot" aria-hidden="true"></span><b class="name">${esc(p.name)}</b>${p.id === view.you ? '<span class="you">you</span>' : ''}
-      ${win ? '<span class="badge win">winner</span>' : ''}${p.connected ? '' : '<span class="badge off">offline</span>'}
+      ${win ? '<span class="badge win">winner</span>' : ''}${forfeit ? '<span class="badge off">forfeit</span>' : p.connected ? '' : '<span class="badge off">offline</span>'}
       <span class="total" style="--i:${i}">${totals[p.id] === undefined ? '' : `Total ${totals[p.id]}`}</span></div>
       <div class="hand">${cards}</div></section>`;
   }).join('');
@@ -775,7 +814,7 @@ function tieBroken() {
 function leftNote() {
   const gone = (view.abandonedBy || []).map(nameOf).map(esc);
   if (gone.length === 0) return '';
-  return `${gone.join(' & ')} left, so the game ended. Scores are as they stood.`;
+  return `${gone.join(' & ')} left and forfeited, so the game ended.`;
 }
 
 function doneHtml() {
@@ -825,8 +864,8 @@ document.addEventListener('click', (ev) => {
     case 'discard': act('discard'); return;
     case 'gringo': act('gringo'); return;
     case 'skippower': act('skipPower'); return;
-    case 'kingkeep': act('confirmKing', { swapWithSlot: null }); return;
-    case 'kingswap': local.kingSwap = true; render(); return;
+    case 'kingkeep': act('confirmKing', { swap: false }); return;
+    case 'kingswap': act('confirmKing', { swap: true }); return;
     case 'rps': act('rps', { pick: el.dataset.pick }); return;
     case 'slap':
       if (local.armed || local.giving) local = { ...local, armed: false, giving: null };
@@ -843,8 +882,8 @@ document.addEventListener('submit', (ev) => {
 });
 
 document.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && (local.armed || local.giving || local.kingSwap || local.jMine !== null)) {
-    local = { ...local, armed: false, giving: null, kingSwap: false, jMine: null };
+  if (ev.key === 'Escape' && (local.armed || local.giving || local.jMine !== null)) {
+    local = { ...local, armed: false, giving: null, jMine: null };
     render();
   }
   if (ev.key === 'Enter' && ev.target.id === 'code') { ev.preventDefault(); doJoin(); }
@@ -930,7 +969,7 @@ function onSlot(ownerId, slot) {
     case 'J2': act('power', { type: 'J', J: { mine: local.jMine, targetId: ownerId, theirs: slot } }); return;
     case 'Q': power('Q', ownerId, slot); return;
     case 'K1': power('K', ownerId, slot); return;
-    case 'K2': act('confirmKing', { swapWithSlot: slot }); return;
+    case 'K2': kingLook(slot); return;
     case 'keep': act('keep', { slot }); return;
     default:
   }
