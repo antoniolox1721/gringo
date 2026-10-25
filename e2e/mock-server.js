@@ -91,6 +91,7 @@ function roomEndpoint(body) {
       const token = randomUUID();
       room.state = wrap(() => engine.addPlayer(room.state, playerId, name));
       room.tokens.set(token, playerId);
+      room.seen[playerId] = Date.now();
       return { playerId, token };
     }
     case 'start': {

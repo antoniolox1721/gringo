@@ -406,6 +406,7 @@ test('a lone player polling an old room loses it; two players keep it', async ()
   const now = clock();
   const alone = await room(lobby(2));
   aged(alone, now() - lonelyMs - 1000);
+  alone.rows.get('ABCD').seen = { p1: now() - lonelyMs - 5000 };
   const first = await poll(alone, 'p0', now);
   assert.equal(first.status, 404);
   assert.equal(alone.rows.has('ABCD'), false);
@@ -434,4 +435,31 @@ test('creating a room clears empty and one-player rooms older than five minutes'
   assert.deepEqual([...db.rows.keys()].filter((k) => k !== 'EMTY' && db.rows.has(k)).sort().filter((k) => ['ONEP', 'TWOP', 'NEWW'].includes(k)), ['NEWW', 'TWOP']);
   assert.equal(db.rows.has('EMTY'), false);
   assert.equal(db.rows.has('ONEP'), false);
+});
+
+test('someone who joined an old lonely room is present before their first poll', async () => {
+  const now = clock();
+  const db = await room(lobby(1), ['p0']);
+  aged(db, now() - lonelyMs - 1000);
+  db.rows.get('ABCD').seen = { p0: now() - 1000 };
+  const j = await handleRoom(db, { action: 'join', code: 'ABCD', name: 'late' }, { ...quiet, now, uuid: () => 'p9' });
+  assert.equal(j.status, 200);
+  assert.equal((await poll(db, 'p0', now)).status, 200, 'the host keeps the room');
+  assert.equal(db.rows.has('ABCD'), true);
+});
+
+test('the delete re-checks presence: a second player who arrived since the read keeps the room', async () => {
+  const now = clock();
+  const db = await room(lobby(2));
+  aged(db, now() - lonelyMs - 1000);
+  db.rows.get('ABCD').seen = { p0: now() - 1000 };
+  const real = db.get.bind(db);
+  let first = true;
+  db.get = async (code) => { // the room looks lonely on the handler's read, then p1 shows up
+    const row = await real(code);
+    if (first) { first = false; db.rows.set('ABCD', { ...db.rows.get('ABCD'), seen: { p0: now() - 1000, p1: now() - 500 } }); }
+    return row;
+  };
+  assert.equal((await poll(db, 'p0', now)).status, 200);
+  assert.equal(db.rows.has('ABCD'), true);
 });

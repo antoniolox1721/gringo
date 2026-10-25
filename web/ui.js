@@ -134,11 +134,35 @@ async function refresh() {
     const { view: v } = await call('room', { action: 'view', code: session.code, token: session.token });
     if (failures) { failures = 0; lastHtml = ''; }
     applyView(v);
+    checkBuild().then(reloadIfStale);
   } catch (e) {
     if (e.status === 403) leave('The host removed you from that room, or it has ended.');
     else if (e.status === 404 || (e.status === 400 && /room/i.test(e.message))) leave('That room no longer exists.');
     else { failures += 1; render(); }
   } finally { fetching = false; }
+}
+
+// A new deploy changes version.json. Reloading is safe (the session is kept), so open pages pick the
+// new client up by themselves, as soon as nothing is half-done on this screen.
+const BUILD = (window.GRINGO_CONFIG || {}).BUILD;
+let lastBuildCheck = 0;
+async function checkBuild() {
+  if (!BUILD || Date.now() - lastBuildCheck < 20000) return;
+  lastBuildCheck = Date.now();
+  try {
+    const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+    const { build } = await res.json();
+    // Once per target build: if a cached file still reports the old id after a reload, do not loop.
+    if (build && build !== BUILD && sessionStorage.getItem('gringo.reloadedFor') !== build) pendingReload = build;
+  } catch { /* offline or no version file: keep playing */ }
+}
+let pendingReload = null;
+function reloadIfStale() {
+  if (!pendingReload || busy) return;
+  const idle = !local.armed && !local.giving && local.peekSel.length === 0 && local.jMine === null;
+  if (!idle) return;
+  try { sessionStorage.setItem('gringo.reloadedFor', pendingReload); } catch { /* private mode */ }
+  location.reload();
 }
 
 function applyView(v) {
@@ -999,6 +1023,7 @@ async function slapAct(args) {
 
 // ---- boot ------------------------------------------------------------------
 render();
+checkBuild().then(reloadIfStale);
 if (session) startSession(session);
 window.addEventListener('online', refresh);
 // A closing tab says bye. The server keeps a short grace, so a reload does not end the game.

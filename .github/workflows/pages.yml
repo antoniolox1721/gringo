@@ -40,8 +40,11 @@ jobs:
             exit 1
           fi
           node --input-type=commonjs -e '
-            const cfg = { SUPABASE_URL: process.env.SUPABASE_URL, SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY };
-            require("fs").writeFileSync("web/config.js", "window.GRINGO_CONFIG = " + JSON.stringify(cfg) + ";\n");
+            const build = process.env.GITHUB_SHA;
+            const cfg = { SUPABASE_URL: process.env.SUPABASE_URL, SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY, BUILD: build };
+            const fs = require("fs");
+            fs.writeFileSync("web/config.js", "window.GRINGO_CONFIG = " + JSON.stringify(cfg) + ";\n");
+            fs.writeFileSync("web/version.json", JSON.stringify({ build }) + "\n");
           '
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

@@ -69,15 +69,12 @@ export function fakeDb() {
       await tick();
       for (const [code, row] of rows) if (row.updated_at && row.updated_at < olderThanIso) rows.delete(code);
     },
-    async purgeLonely(nowMs, lonelyMs) {
+    async purgeLonely(nowMs, lonelyMs, only = null) {
       await tick();
       for (const [code, row] of rows) {
+        if (only && code !== only) continue;
         if (row.created_at && lonelyRoom(row.seen, Date.parse(row.created_at), nowMs, lonelyMs)) rows.delete(code);
       }
-    },
-    async remove(code) {
-      await tick();
-      rows.delete(code);
     },
     async update(code, expectedVersion, patch) {
       await tick();

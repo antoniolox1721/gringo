@@ -78,6 +78,8 @@ export async function handleRoom(db, body, deps = {}) {
           tokens: { ...tokens, [playerId]: tokenHash },
         })),
       );
+      // A joiner counts as present at once, so an old room does not look lonely before their first poll.
+      if (db.touch) await db.touch(code, {}, { [playerId]: now() });
       await notify(code, res.version);
       return ok({ playerId, token });
     }
@@ -96,9 +98,10 @@ export async function handleRoom(db, body, deps = {}) {
       if (db.touch && (bye || !fresh || Object.keys(missing).length > 0)) await db.touch(code, missing, { [id]: mine });
       const next = { ...missing, ...seen, [id]: mine };
       // Fewer than two people have been in this room for a while: clear it, with the caller inside.
-      if (!bye && createdAt && engine.lonelyRoom({ ...seen, [id]: mine }, createdAt, t, limits.lonelyMs)) {
-        if (db.remove) await db.remove(code);
-        throw new HttpError(404, 'room not found');
+      // The delete re-checks presence itself, so someone who arrived a moment ago keeps the room.
+      if (!bye && db.purgeLonely && createdAt && engine.lonelyRoom({ ...seen, [id]: mine }, createdAt, t, limits.lonelyMs)) {
+        await db.purgeLonely(t, limits.lonelyMs, code);
+        if (!(await db.get(code))) throw new HttpError(404, 'room not found');
       }
       if (bye || engine.absentPlayers(state, next, id, t, limits).length === 0) {
         return ok({ view: engine.viewFor(state, id) });

@@ -1,6 +1,6 @@
 // Storage helpers shared by the Edge Functions and the node tests.
 // `db` is any object with get(code), insert(row), update(code, expectedVersion, patch), touch(code, missing, caller)
-// purge(olderThanIso), purgeLonely(nowMs, lonelyMs) and remove(code);
+// purge(olderThanIso), purgeLonely(nowMs, lonelyMs, code?);
 // supabaseDb(client) adapts a supabase-js client to that interface.
 
 export class HttpError extends Error {
@@ -103,12 +103,9 @@ export function supabaseDb(client) {
       const { error } = await client.from('games').delete().lt('updated_at', olderThanIso);
       if (error) throw new Error(error.message);
     },
-    async purgeLonely(nowMs, lonelyMs) {
-      const { error } = await client.rpc('purge_lonely_rooms', { p_now_ms: nowMs, p_lonely_ms: lonelyMs });
-      if (error) throw new Error(error.message);
-    },
-    async remove(code) {
-      const { error } = await client.from('games').delete().eq('code', code);
+    // Re-checks the lonely condition inside the delete itself; `code` limits it to one room.
+    async purgeLonely(nowMs, lonelyMs, code = null) {
+      const { error } = await client.rpc('purge_lonely_rooms', { p_now_ms: nowMs, p_lonely_ms: lonelyMs, p_code: code });
       if (error) throw new Error(error.message);
     },
     async update(code, expectedVersion, patch) {

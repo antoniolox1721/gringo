@@ -299,3 +299,17 @@ test('a penalty card opens a fifth slot, and slapping it away closes the slot ag
   await host.context.close();
   await guest.context.close();
 });
+
+test('an open page reloads by itself once a newer build is deployed, and only once', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ viewport: VIEWPORT });
+  await context.route('**/config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'window.GRINGO_CONFIG = { BUILD: "old" };' }));
+  await context.route('**/version.json*', (r) => r.fulfill({ contentType: 'application/json', body: '{"build":"new"}' }));
+  const page = await context.newPage();
+  let loads = 0;
+  page.on('load', () => { loads += 1; });
+  await page.goto(`${baseURL}/?mock=1`);
+  await expect.poll(() => loads, { timeout: 5000 }).toBe(2);
+  await page.waitForTimeout(1500);
+  expect(loads, 'the guard stops a reload loop').toBe(2);
+  await context.close();
+});
