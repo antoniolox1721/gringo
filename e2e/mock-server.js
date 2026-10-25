@@ -27,7 +27,7 @@ const TEST_MODE = process.env.MOCK_TEST === '1';
 // Presence: MOCK_STALE_MS shortens the window after which a silent player counts as gone.
 const STALE_MS = Number(process.env.MOCK_STALE_MS) || engine.PRESENCE.staleMs;
 const BYE_GRACE_MS = Math.min(engine.PRESENCE.byeGraceMs, STALE_MS / 3);
-const LIMITS = { staleMs: STALE_MS, byeGraceMs: BYE_GRACE_MS, idleMs: Number(process.env.MOCK_IDLE_MS) || engine.PRESENCE.idleMs };
+const LIMITS = { staleMs: STALE_MS, byeGraceMs: BYE_GRACE_MS, idleMs: Number(process.env.MOCK_IDLE_MS) || engine.PRESENCE.idleMs, lonelyMs: Number(process.env.MOCK_LONELY_MS) || engine.PRESENCE.lonelyMs };
 
 const rooms = new Map(); // code -> { state, tokens: Map(token -> playerId) }
 
@@ -80,7 +80,8 @@ function roomEndpoint(body) {
       const code = newCode();
       const playerId = randomUUID();
       const token = randomUUID();
-      rooms.set(code, { state: engine.createGame(playerId, name), tokens: new Map([[token, playerId]]), seen: {} });
+      for (const [c, r] of rooms) if (engine.lonelyRoom(r.seen, r.createdAt, Date.now(), LIMITS.lonelyMs)) rooms.delete(c);
+      rooms.set(code, { state: engine.createGame(playerId, name), tokens: new Map([[token, playerId]]), seen: {}, createdAt: Date.now() });
       return { code, playerId, token };
     }
     case 'join': {
@@ -113,7 +114,12 @@ function roomEndpoint(body) {
       const id = auth(room, body.token);
       const t = Date.now();
       room.seen[id] = body.bye === true ? t - (STALE_MS - BYE_GRACE_MS) : t;
+      const lonely = engine.lonelyRoom(room.seen, room.createdAt, t, LIMITS.lonelyMs);
       for (const p of room.state.players) if (room.seen[p.id] === undefined) room.seen[p.id] = t;
+      if (body.bye !== true && lonely) {
+        rooms.delete(String(body.code).toUpperCase());
+        throw new HttpError(404, 'room not found');
+      }
       const absent = engine.absentPlayers(room.state, room.seen, id, t, LIMITS);
       if (body.bye !== true && absent.length) room.state = wrap(() => engine.stamp(room.state, engine.dropAbsent(room.state, absent), t));
       return { view: engine.viewFor(room.state, id) };

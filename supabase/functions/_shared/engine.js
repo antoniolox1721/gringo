@@ -255,7 +255,14 @@ export function removePlayer(state, id) {
 
 // How long a player may go without polling before the others treat them as gone, and how much of
 // that a closing tab leaves them (so a page reload survives but a closed tab ends the game fast).
-export const PRESENCE = { staleMs: 30000, byeGraceMs: 8000, idleMs: 4 * 60 * 1000 };
+export const PRESENCE = { staleMs: 30000, byeGraceMs: 8000, idleMs: 4 * 60 * 1000, lonelyMs: 5 * 60 * 1000 };
+
+// A room nobody shares is cleared: older than `lonelyMs` and fewer than two players have polled
+// within that time. `seen` maps player ids to their last heartbeat (epoch ms).
+export function lonelyRoom(seen, createdAtMs, nowMs, lonelyMs = PRESENCE.lonelyMs) {
+  if (nowMs - createdAtMs <= lonelyMs) return false;
+  return Object.values(seen || {}).filter((t) => nowMs - t <= lonelyMs).length < 2;
+}
 
 // Who the game is waiting on right now: the players whose move is missing.
 export function blockers(state) {

@@ -1,6 +1,6 @@
 // Storage helpers shared by the Edge Functions and the node tests.
 // `db` is any object with get(code), insert(row), update(code, expectedVersion, patch), touch(code, missing, caller)
-// and purge(olderThanIso);
+// purge(olderThanIso), purgeLonely(nowMs, lonelyMs) and remove(code);
 // supabaseDb(client) adapts a supabase-js client to that interface.
 
 export class HttpError extends Error {
@@ -19,7 +19,7 @@ export async function hashToken(token, cryptoImpl = globalThis.crypto) {
 export async function loadGame(db, code) {
   const row = await db.get(code);
   if (!row) throw new HttpError(404, 'room not found');
-  return { state: row.state, tokens: row.tokens, version: row.version, seen: row.seen || {} };
+  return { state: row.state, tokens: row.tokens, version: row.version, seen: row.seen || {}, createdAt: row.created_at ? Date.parse(row.created_at) : null };
 }
 
 // Compare-and-set on the version column. `tokens` is only written when given.
@@ -81,7 +81,7 @@ export function supabaseDb(client) {
     async get(code) {
       const { data, error } = await client
         .from('games')
-        .select('state,tokens,version,seen')
+        .select('state,tokens,version,seen,created_at')
         .eq('code', code)
         .maybeSingle();
       if (error) throw new Error(error.message);
@@ -101,6 +101,14 @@ export function supabaseDb(client) {
     },
     async purge(olderThanIso) {
       const { error } = await client.from('games').delete().lt('updated_at', olderThanIso);
+      if (error) throw new Error(error.message);
+    },
+    async purgeLonely(nowMs, lonelyMs) {
+      const { error } = await client.rpc('purge_lonely_rooms', { p_now_ms: nowMs, p_lonely_ms: lonelyMs });
+      if (error) throw new Error(error.message);
+    },
+    async remove(code) {
+      const { error } = await client.from('games').delete().eq('code', code);
       if (error) throw new Error(error.message);
     },
     async update(code, expectedVersion, patch) {

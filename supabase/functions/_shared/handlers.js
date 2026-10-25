@@ -55,6 +55,7 @@ export async function handleRoom(db, body, deps = {}) {
       const state = engine.createGame(playerId, name);
       // Housekeeping: rooms nobody has touched for a day are dead. Best effort.
       if (db.purge) await db.purge(new Date(now() - ROOM_TTL_MS).toISOString()).catch(() => {});
+      if (db.purgeLonely) await db.purgeLonely(now(), limits.lonelyMs).catch(() => {});
       for (let i = 0; i < 20; i++) {
         const code = randomCode(rng);
         if (await db.insert({ code, state, tokens, version: state.version })) {
@@ -82,7 +83,7 @@ export async function handleRoom(db, body, deps = {}) {
     }
 
     if (action === 'view') {
-      const { state, tokens, seen } = await loadGame(db, code);
+      const { state, tokens, seen, createdAt } = await loadGame(db, code);
       const id = await playerIdForToken(tokens, body.token);
       const t = now();
       // Every poll is a heartbeat. A closing tab says bye and keeps only a short grace period.
@@ -94,6 +95,11 @@ export async function handleRoom(db, body, deps = {}) {
       const fresh = seen[id] !== undefined && t - seen[id] < 2000;
       if (db.touch && (bye || !fresh || Object.keys(missing).length > 0)) await db.touch(code, missing, { [id]: mine });
       const next = { ...missing, ...seen, [id]: mine };
+      // Fewer than two people have been in this room for a while: clear it, with the caller inside.
+      if (!bye && createdAt && engine.lonelyRoom({ ...seen, [id]: mine }, createdAt, t, limits.lonelyMs)) {
+        if (db.remove) await db.remove(code);
+        throw new HttpError(404, 'room not found');
+      }
       if (bye || engine.absentPlayers(state, next, id, t, limits).length === 0) {
         return ok({ view: engine.viewFor(state, id) });
       }

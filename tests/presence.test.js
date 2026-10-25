@@ -388,3 +388,50 @@ test('a rematch started by someone leaving gets a fresh idle clock', async () =>
   assert.equal(st.phase, 'setup');
   assert.equal(st.lastMoveAt, now());
 });
+
+// ---- lonely rooms ----------------------------------------------------------------
+const { lonelyMs } = engine.PRESENCE;
+const aged = (db, createdAt) => { const r = db.rows.get('ABCD'); db.rows.set('ABCD', { ...r, created_at: new Date(createdAt).toISOString() }); };
+
+test('lonelyRoom: needs to be old and to have fewer than two players present', () => {
+  const t = 10 * lonelyMs;
+  assert.equal(engine.lonelyRoom({}, t - 1000, t), false, 'a new room is left alone');
+  assert.equal(engine.lonelyRoom({}, 0, t), true, 'nobody ever came');
+  assert.equal(engine.lonelyRoom({ a: t - 1000 }, 0, t), true, 'only one player is here');
+  assert.equal(engine.lonelyRoom({ a: t - 1000, b: t - lonelyMs - 1 }, 0, t), true, 'the other left a while ago');
+  assert.equal(engine.lonelyRoom({ a: t - 1000, b: t - lonelyMs + 1000 }, 0, t), false, 'two players are in it');
+});
+
+test('a lone player polling an old room loses it; two players keep it', async () => {
+  const now = clock();
+  const alone = await room(lobby(2));
+  aged(alone, now() - lonelyMs - 1000);
+  const first = await poll(alone, 'p0', now);
+  assert.equal(first.status, 404);
+  assert.equal(alone.rows.has('ABCD'), false);
+
+  const together = await room(lobby(2));
+  aged(together, now() - lonelyMs - 1000);
+  together.rows.get('ABCD').seen = { p0: now() - 1000, p1: now() - 2000 };
+  assert.equal((await poll(together, 'p0', now)).status, 200);
+  assert.equal((await poll(together, 'p1', now)).status, 200);
+  now.advance(lonelyMs - 10_000);
+  assert.equal((await poll(together, 'p0', now)).status, 200);
+  assert.equal((await poll(together, 'p1', now)).status, 200);
+  assert.equal(together.rows.has('ABCD'), true);
+});
+
+test('creating a room clears empty and one-player rooms older than five minutes', async () => {
+  const db = fakeDb();
+  const now = clock(Date.parse('2026-01-10T00:00:00Z'));
+  const old = new Date(now() - lonelyMs - 1000).toISOString();
+  const recent = new Date(now() - 60_000).toISOString();
+  db.rows.set('EMTY', { code: 'EMTY', state: {}, tokens: {}, version: 0, seen: {}, created_at: old, updated_at: recent });
+  db.rows.set('ONEP', { code: 'ONEP', state: {}, tokens: {}, version: 0, seen: { a: now() - 1000 }, created_at: old, updated_at: recent });
+  db.rows.set('TWOP', { code: 'TWOP', state: {}, tokens: {}, version: 0, seen: { a: now() - 1000, b: now() - 2000 }, created_at: old, updated_at: recent });
+  db.rows.set('NEWW', { code: 'NEWW', state: {}, tokens: {}, version: 0, seen: {}, created_at: recent, updated_at: recent });
+  assert.equal((await handleRoom(db, { action: 'create', name: 'x' }, { ...quiet, now })).status, 200);
+  assert.deepEqual([...db.rows.keys()].filter((k) => k !== 'EMTY' && db.rows.has(k)).sort().filter((k) => ['ONEP', 'TWOP', 'NEWW'].includes(k)), ['NEWW', 'TWOP']);
+  assert.equal(db.rows.has('EMTY'), false);
+  assert.equal(db.rows.has('ONEP'), false);
+});

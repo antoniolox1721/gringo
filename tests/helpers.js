@@ -1,3 +1,5 @@
+import { lonelyRoom } from '../supabase/functions/_shared/engine.js';
+
 // Deck convention: deck[0] is the top (next card drawn). Discard convention: last element is the top.
 let nextUid = 1000;
 
@@ -66,6 +68,16 @@ export function fakeDb() {
     async purge(olderThanIso) {
       await tick();
       for (const [code, row] of rows) if (row.updated_at && row.updated_at < olderThanIso) rows.delete(code);
+    },
+    async purgeLonely(nowMs, lonelyMs) {
+      await tick();
+      for (const [code, row] of rows) {
+        if (row.created_at && lonelyRoom(row.seen, Date.parse(row.created_at), nowMs, lonelyMs)) rows.delete(code);
+      }
+    },
+    async remove(code) {
+      await tick();
+      rows.delete(code);
     },
     async update(code, expectedVersion, patch) {
       await tick();
