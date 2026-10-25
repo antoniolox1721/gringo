@@ -98,7 +98,7 @@ export async function handleRoom(db, body, deps = {}) {
         return ok({ view: engine.viewFor(state, id) });
       }
       const res = await applyWithRetry(db, code, (st) =>
-        runEngine(() => engine.dropAbsent(st, engine.absentPlayers(st, next, id, t, limits))),
+        runEngine(() => engine.stamp(st, engine.dropAbsent(st, engine.absentPlayers(st, next, id, t, limits)), t)),
       );
       await notify(code, res.version);
       return ok({ view: engine.viewFor(res.state, id) });
@@ -107,7 +107,7 @@ export async function handleRoom(db, body, deps = {}) {
     if (action === 'leave') {
       const res = await applyWithRetry(db, code, async (state, tokens) => {
         const id = await playerIdForToken(tokens, body.token);
-        return runEngine(() => engine.dropAbsent(state, [id]));
+        return runEngine(() => engine.stamp(state, engine.dropAbsent(state, [id]), now()));
       });
       await notify(code, res.version);
       return ok({ ok: true });

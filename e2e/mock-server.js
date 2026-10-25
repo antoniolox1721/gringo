@@ -115,13 +115,13 @@ function roomEndpoint(body) {
       room.seen[id] = body.bye === true ? t - (STALE_MS - BYE_GRACE_MS) : t;
       for (const p of room.state.players) if (room.seen[p.id] === undefined) room.seen[p.id] = t;
       const absent = engine.absentPlayers(room.state, room.seen, id, t, LIMITS);
-      if (body.bye !== true && absent.length) room.state = wrap(() => engine.dropAbsent(room.state, absent));
+      if (body.bye !== true && absent.length) room.state = wrap(() => engine.stamp(room.state, engine.dropAbsent(room.state, absent), t));
       return { view: engine.viewFor(room.state, id) };
     }
     case 'leave': {
       const room = roomOf(body.code);
       const id = auth(room, body.token);
-      room.state = wrap(() => engine.dropAbsent(room.state, [id]));
+      room.state = wrap(() => engine.stamp(room.state, engine.dropAbsent(room.state, [id]), Date.now()));
       return { ok: true };
     }
     default:

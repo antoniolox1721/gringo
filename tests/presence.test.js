@@ -372,3 +372,19 @@ test('a kick that races a start is judged on the state it changes', async () => 
   assert.equal(r.status, 403);
   assert.equal(db.rows.get('ABCD').state.players[1].connected, true);
 });
+
+test('a rematch started by someone leaving gets a fresh idle clock', async () => {
+  const s = stacked(3);
+  s.rematch = [];
+  s.lastMoveAt = 1;
+  let done = engine.finishGame(s);
+  done = engine.voteRematch(done, 'p0');
+  done = engine.voteRematch(done, 'p1');
+  const db = await room(done);
+  const now = clock();
+  const r = await handleRoom(db, { action: 'leave', code: 'ABCD', token: 'tp2' }, { ...quiet, now });
+  assert.equal(r.status, 200);
+  const st = db.rows.get('ABCD').state;
+  assert.equal(st.phase, 'setup');
+  assert.equal(st.lastMoveAt, now());
+});
