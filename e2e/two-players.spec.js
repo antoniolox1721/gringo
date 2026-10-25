@@ -261,3 +261,26 @@ test('King: look at an opponent card and one of your own, then decide; power car
   await host.context.close();
   await guest.context.close();
 });
+
+test('a penalty card opens a fifth slot, and slapping it away closes the slot again', async ({ browser, baseURL, request }) => {
+  const errors = [];
+  const { host, guest, gs } = await setupGame(browser, baseURL, request, errors, {
+    hands: { 0: ['5S', '6S', '7S', '8S'], 1: ['9H', '10H', '2C', '3C'] },
+    discard: ['4D'],
+    deck: ['4C', '5D', '6D', '7D', '8D', 'AC', 'AD', 'AH'],
+  });
+  const seat = (page) => page.locator(`.seat[data-player="${gs.playerId}"] .slot`);
+  await expect(seat(guest.page)).toHaveCount(4);
+  // Wrong slap (2C against a 4): the guest takes the 4C as a fifth card.
+  await guest.page.click('[data-act=slap]');
+  await slot(guest.page, gs.playerId, 2).click();
+  for (const { page } of [host, guest]) await expect(seat(page)).toHaveCount(5);
+  // That 4C matches the 4 on the pile: slap it away. The extra slot must go with it.
+  await guest.page.click('[data-act=slap]');
+  await slot(guest.page, gs.playerId, 4).click();
+  for (const { page } of [host, guest]) await expect(seat(page)).toHaveCount(4);
+  await expect(slot(guest.page, gs.playerId, 2)).toBeVisible();
+  expect(errors).toEqual([]);
+  await host.context.close();
+  await guest.context.close();
+});

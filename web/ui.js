@@ -203,6 +203,8 @@ function planFlights(p, v) {
       else if (e.empty && !o.empty) emptied.push({ pid: np.id, slot });
       else if (!e.empty && e.ver !== o.ver) changed.push({ pid: np.id, slot });
     });
+    // An extra slot that emptied and was removed in the same step still counts as emptied.
+    op.hand.forEach((o, slot) => { if (slot >= np.hand.length && !o.empty) emptied.push({ pid: np.id, slot }); });
   }
   const topMoved = !!v.discardTop && cardId(v.discardTop) !== cardId(p.discardTop);
   const top = v.discardTop;

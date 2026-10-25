@@ -219,3 +219,53 @@ test('first discard becomes the top and can be matched', () => {
   assert.equal(r.ok, true);
   assert.equal(r.state.discard.length, 2);
 });
+
+// Player 'a' holds an extra fifth card (a penalty) that is a 7.
+function extraSlotGame() {
+  const g = slapGame();
+  g.players[0].hand = [c('9'), c('3'), c('4'), c('5'), c('7', 'H')];
+  g.players[0].moves = [0, 0, 0, 0, 1];
+  return g;
+}
+
+test('a penalty slot disappears again when its card is slapped away', () => {
+  const { state, ok } = slap(extraSlotGame(), 'a', { ownerId: 'a', slot: 4 });
+  assert.equal(ok, true);
+  assert.equal(state.players[0].hand.length, 4);
+  assert.ok(state.players[0].hand.every((x) => x !== null));
+});
+
+test('giving the penalty card away on a slap also removes its slot', () => {
+  const g = extraSlotGame();
+  const { state, ok } = slap(g, 'a', { ownerId: 'b', slot: 1, giveSlot: 4 });
+  assert.equal(ok, true);
+  assert.equal(state.players[0].hand.length, 4);
+  assert.equal(state.players[1].hand[1].uid, g.players[0].hand[4].uid);
+});
+
+test('only the empty tail goes: gaps in the original four stay, and a hole before a live extra stays', () => {
+  const g = extraSlotGame();
+  const first = slap(g, 'a', { ownerId: 'a', slot: 4 });
+  assert.equal(first.state.players[0].hand.length, 4);
+  const gap = slap({ ...slapGame() }, 'a', { ownerId: 'a', slot: 0 });
+  assert.equal(gap.state.players[0].hand.length, 4);
+  assert.equal(gap.state.players[0].hand[0], null);
+  const two = extraSlotGame();
+  two.players[0].hand = [c('9'), c('3'), c('4'), c('7', 'H'), c('6')];
+  const mid = slap(two, 'a', { ownerId: 'a', slot: 3 });
+  assert.equal(mid.state.players[0].hand.length, 5);
+  assert.equal(mid.state.players[0].hand[3], null);
+});
+
+test('a slot that comes back after being trimmed keeps counting its changes', () => {
+  const g = extraSlotGame();
+  const trimmed = slap(g, 'a', { ownerId: 'a', slot: 4 }).state;
+  const before = viewFor(trimmed, 'a').players[0].hand.length;
+  assert.equal(before, 4);
+  trimmed.discardClaimed = true;
+  const again = slap(trimmed, 'a', { ownerId: 'a', slot: 0 });
+  assert.equal(again.ok, false);
+  assert.equal(again.state.players[0].hand.length, 5);
+  assert.equal(trimmed.players[0].moves[4], 2, 'removal counted as a change');
+  assert.equal(viewFor(again.state, 'a').players[0].hand[4].ver, 3, 'the new card continues the counter, so a stale reveal cannot match it');
+});

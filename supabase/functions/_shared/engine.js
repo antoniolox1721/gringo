@@ -101,6 +101,13 @@ function touch(p, slot) {
 }
 
 // Drops every "viewable" reference to a slot whose content just changed.
+// Penalty cards add slots beyond the original four. Once the last of them is empty it goes away
+// again; gaps inside the original four stay, because where a card used to be is part of the game.
+// `moves` is kept as is, so a slot that comes back later continues its change counter.
+function trimExtraSlots(p) {
+  while (p.hand.length > HAND_SIZE && p.hand[p.hand.length - 1] === null) p.hand.pop();
+}
+
 function invalidateSlot(s, ownerId, slot) {
   for (const p of s.players) {
     p.viewable = p.viewable.filter((v) => !(v.ownerId === ownerId && v.slot === slot));
@@ -627,6 +634,8 @@ export function slap(state, id, args, rng = secureRandom) {
         touch(p, args.giveSlot);
         invalidateSlot(s, p.id, args.giveSlot);
       }
+      trimExtraSlots(o);
+      trimExtraSlots(p);
       discardCard(s, taken, id);
       s.discardClaimed = true;
       checkZeroDraft(s, p.id);
