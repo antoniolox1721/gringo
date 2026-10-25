@@ -119,8 +119,9 @@ function checkSetupDone(s) {
   const live = connectedPlayers(s);
   if (live.length > 0 && live.every((p) => p.seenSlots.length === 2)) {
     s.phase = 'turns';
-    const first = s.players.findIndex((p) => p.connected);
-    s.turn = first;
+    // After a rematch the previous winner starts; otherwise the first player in the room.
+    const starter = s.players.findIndex((p) => p.connected && p.id === s.starter);
+    s.turn = starter >= 0 ? starter : s.players.findIndex((p) => p.connected);
   }
 }
 
@@ -150,6 +151,8 @@ export function createGame(hostId, hostName) {
     abandonedBy: null,
     result: null,
     rps: null,
+    rematch: [],
+    starter: null,
   };
 }
 
@@ -166,16 +169,54 @@ export function startGame(state, byId, rng = secureRandom) {
   if (state.phase !== 'lobby') throw new Error('already started');
   if (byId !== state.hostId) throw new Error('only the host can start');
   if (state.players.length < 2) throw new Error('need at least 2 players');
+  return produce(state, (s) => deal(s, rng));
+}
+
+function deal(s, rng) {
+  const deck = shuffle(buildDeck(), rng);
+  for (const p of s.players) {
+    p.hand = deck.splice(0, HAND_SIZE);
+    p.moves = p.hand.map(() => 0);
+    p.seenSlots = [];
+    p.viewable = [];
+    p.gringo = false;
+  }
+  s.discard = [];
+  s.deck = deck;
+  s.discardClaimed = false;
+  s.turn = 0;
+  s.drawn = null;
+  s.acted = false;
+  s.pending = [];
+  s.finalLeft = null;
+  s.endedBy = null;
+  s.abandonedBy = null;
+  s.result = null;
+  s.rps = null;
+  s.rematch = [];
+  s.phase = 'setup';
+}
+
+// Once every player still here has asked for another game, the room restarts: the last winner
+// moves first, and anyone who walked away is dropped. Does nothing while a vote is still open.
+function maybeRematch(s, rng) {
+  if (s.phase !== 'done') return;
+  const live = connectedPlayers(s);
+  if (live.length < 2 || !live.every((p) => (s.rematch || []).includes(p.id))) return;
+  const winner = s.result && s.result.winners.find((id) => live.some((p) => p.id === id));
+  s.players = live;
+  if (!live.some((p) => p.id === s.hostId)) s.hostId = live[0].id;
+  deal(s, rng);
+  s.starter = winner || null;
+}
+
+export function voteRematch(state, id, rng = secureRandom) {
+  requireActive(state, id);
+  if (state.phase !== 'done') throw new Error('the game is not over');
+  if ((state.rematch || []).includes(id)) return state;
   return produce(state, (s) => {
-    const deck = shuffle(buildDeck(), rng);
-    for (const p of s.players) {
-      p.hand = deck.splice(0, HAND_SIZE);
-      p.moves = p.hand.map(() => 0);
-    }
-    s.discard = [];
-    s.deck = deck;
-    s.discardClaimed = false;
-    s.phase = 'setup';
+    s.rematch = [...(s.rematch || []), id];
+    maybeRematch(s, rng);
   });
 }
 
@@ -264,7 +305,14 @@ export function absentPlayers(state, seen, callerId, now, limits = PRESENCE) {
 // is scored at once among the players still here. Never leaves a game that cannot finish.
 export function dropAbsent(state, ids) {
   const gone = ids.filter((id) => state.players.some((p) => p.id === id && p.connected));
-  if (gone.length === 0 || state.phase === 'done') return state;
+  if (gone.length === 0) return state;
+  // A finished game just loses them (their absence may complete the rematch vote).
+  if (state.phase === 'done') {
+    return produce(state, (s) => {
+      for (const id of gone) playerOf(s, id).connected = false;
+      maybeRematch(s, secureRandom);
+    });
+  }
   if (state.phase === 'lobby') return gone.reduce((st, id) => removePlayer(st, id), state);
   return produce(state, (s) => {
     for (const id of gone) playerOf(s, id).connected = false;
@@ -319,6 +367,7 @@ export function viewFor(state, playerId) {
     endedBy: state.endedBy ? { ...state.endedBy } : null,
     abandonedBy: state.abandonedBy ? state.abandonedBy.slice() : null,
     result: state.result ? structuredClone(state.result) : null,
+    rematch: (state.rematch || []).slice(),
     rps: state.rps ? rpsView(state.rps, playerId) : null,
   };
 }

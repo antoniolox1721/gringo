@@ -133,6 +133,21 @@ test('full game: wrong slap grows hand, gringo, final round, result, hidden info
   }
   await expect(host.page.locator('#result')).toContainText('You win!');
   await expect(guest.page.locator('#result')).toContainText('Hanna wins');
+
+  // Play again needs both players; the winner (host) starts the new game.
+  await host.page.click('[data-act=again]');
+  await expect(host.page.locator('[data-act=again]')).toBeDisabled();
+  await expect(host.page.locator('[data-act=again]')).toContainText('Waiting for Gus');
+  await expect(guest.page.locator('[data-act=again]')).toContainText('1/2 ready');
+  await guest.page.click('[data-act=again]');
+  for (const [p, s] of [[host.page, hs], [guest.page, gs]]) {
+    await expect(p.getByText('Peek at 2 of your 4 cards')).toBeVisible();
+    await slot(p, s.playerId, 0).click();
+    await slot(p, s.playerId, 1).click();
+    await p.click('[data-act=peek]');
+  }
+  await expect(host.page.locator('#hint')).toContainText('Your turn');
+  await expect(guest.page.locator('#hint')).not.toContainText('Your turn');
   expect(errors).toEqual([]);
   await host.context.close();
   await guest.context.close();

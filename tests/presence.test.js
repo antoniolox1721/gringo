@@ -90,9 +90,12 @@ test('a lobby only loses the absent player; the host passes on', () => {
   assert.equal(next.abandonedBy, null);
 });
 
-test('dropAbsent ignores finished games and players already gone', () => {
+test('dropAbsent leaves a finished game finished and ignores players already gone', () => {
   const done = engine.dropAbsent(stacked(), ['p0']);
-  assert.equal(engine.dropAbsent(done, ['p1']), done);
+  const later = engine.dropAbsent(done, ['p1']);
+  assert.equal(later.phase, 'done');
+  assert.deepEqual(later.abandonedBy, ['p0']);
+  assert.equal(engine.dropAbsent(later, ['p1']), later);
   assert.equal(engine.dropAbsent(stacked(), []).phase, 'turns');
 });
 
@@ -200,13 +203,12 @@ test('leave ends a running game at once and removes a lobby player', async () =>
   assert.equal(s2.hostId, 'p1');
 });
 
-test('leave needs a valid token and is harmless on a finished game', async () => {
+test('leave needs a valid token and leaves a finished game finished', async () => {
   const db = await room(stacked(2));
   assert.equal((await handleRoom(db, { action: 'leave', code: 'ABCD', token: 'nope' }, quiet)).status, 403);
   await handleRoom(db, { action: 'leave', code: 'ABCD', token: 'tp0' }, quiet);
-  const v = db.rows.get('ABCD').state.version;
   assert.equal((await handleRoom(db, { action: 'leave', code: 'ABCD', token: 'tp1' }, quiet)).status, 200);
-  assert.equal(db.rows.get('ABCD').state.version, v);
+  assert.equal(db.rows.get('ABCD').state.phase, 'done');
 });
 
 test('creating a room purges rooms untouched for a day', async () => {

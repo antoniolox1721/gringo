@@ -156,6 +156,7 @@ function actEndpoint(body) {
       case 'slap': { const r = engine.slap(s, id, a, RNG); next = r.state; extra = { ok: r.ok }; break; }
       case 'gringo': next = engine.callGringo(s, id); break;
       case 'rps': next = engine.submitRps(s, id, a.pick); break;
+      case 'rematch': next = engine.voteRematch(s, id, RNG); break;
       default: throw new Error('unknown action');
     }
   });

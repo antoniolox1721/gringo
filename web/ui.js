@@ -831,7 +831,19 @@ function doneHtml() {
     <h2>${youWon ? 'You win!' : `${names} ${winners.length > 1 ? 'win' : 'wins'}`}</h2>
     <p class="muted">${leftNote() || (tieBroken() ? 'Tied for lowest, settled by rock, paper, scissors.' : 'Lowest total wins. Red kings count −3, jokers 0.')}</p></section>
     <div class="results">${resultHands()}</div>
-    <button class="primary again" data-act="leave">Back to start</button></div>`;
+    ${againHtml()}</div>`;
+}
+
+function againHtml() {
+  const voted = view.rematch || [];
+  const live = view.players.filter((p) => p.connected);
+  const waiting = live.filter((p) => !voted.includes(p.id)).map((p) => esc(p.name));
+  const mine = voted.includes(view.you);
+  if (live.length < 2) return '<button class="primary again" data-act="leave">Back to start</button>';
+  const label = mine ? `Waiting for ${waiting.join(' & ')}` : `Play again${voted.length ? ` (${voted.length}/${live.length} ready)` : ''}`;
+  const note = mine ? '' : '<p class="muted again-note">Everyone has to agree. The winner starts.</p>';
+  return `<button class="primary again" data-act="again"${mine ? ' disabled' : ''}>${label}</button>${note}
+    <button class="link again" data-act="leave">Back to start</button>`;
 }
 
 // ---- events ----------------------------------------------------------------
@@ -870,6 +882,7 @@ document.addEventListener('click', (ev) => {
     case 'kingkeep': act('confirmKing', { swap: false }); return;
     case 'kingswap': act('confirmKing', { swap: true }); return;
     case 'rps': act('rps', { pick: el.dataset.pick }); return;
+    case 'again': act('rematch'); return;
     case 'slap':
       if (local.armed || local.giving) local = { ...local, armed: false, giving: null };
       else { local = { ...local, armed: true }; buzz(8); }

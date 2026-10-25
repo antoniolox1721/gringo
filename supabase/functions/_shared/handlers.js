@@ -94,7 +94,7 @@ export async function handleRoom(db, body, deps = {}) {
       const fresh = seen[id] !== undefined && t - seen[id] < 2000;
       if (db.touch && (bye || !fresh || Object.keys(missing).length > 0)) await db.touch(code, missing, { [id]: mine });
       const next = { ...missing, ...seen, [id]: mine };
-      if (bye || state.phase === 'done' || engine.absentPlayers(state, next, id, t, limits).length === 0) {
+      if (bye || engine.absentPlayers(state, next, id, t, limits).length === 0) {
         return ok({ view: engine.viewFor(state, id) });
       }
       const res = await applyWithRetry(db, code, (st) =>
@@ -195,6 +195,8 @@ function applyAction(state, id, action, args) {
       return { state: engine.callGringo(state, id) };
     case 'rps':
       return { state: engine.submitRps(state, id, args.pick) };
+    case 'rematch':
+      return { state: engine.voteRematch(state, id) };
     default:
       throw new HttpError(400, 'unknown action');
   }

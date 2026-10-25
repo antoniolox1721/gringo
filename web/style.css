@@ -595,3 +595,5 @@ input:focus-visible { outline: none; border-color: var(--focus); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+.again-note { text-align: center; margin: 8px 0 0; }
+button.link.again { margin-top: 6px; }
