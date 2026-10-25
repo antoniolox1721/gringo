@@ -351,3 +351,22 @@ test('polls closer than two seconds apart skip the database write', async () => 
   await poll(db, 'p0', now);
   assert.equal(writes, first + 1);
 });
+
+test('a kick that races a start is judged on the state it changes', async () => {
+  const db = await room(lobby(3));
+  const get = db.get;
+  let started = false;
+  // The game starts right after the kick's first read, before its write.
+  db.get = async (code) => {
+    const row = await get(code);
+    if (!started) {
+      started = true;
+      const st = engine.startGame(row.state, 'p0', rng);
+      db.rows.set(code, { ...db.rows.get(code), state: st, version: st.version });
+    }
+    return row;
+  };
+  const r = await handleRoom(db, { action: 'kick', code: 'ABCD', token: 'tp0', targetId: 'p1' }, quiet);
+  assert.equal(r.status, 403);
+  assert.equal(db.rows.get('ABCD').state.players[1].connected, true);
+});

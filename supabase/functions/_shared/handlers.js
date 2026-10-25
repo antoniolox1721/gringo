@@ -114,16 +114,13 @@ export async function handleRoom(db, body, deps = {}) {
     }
 
     if (action === 'start' || action === 'kick') {
-      if (action === 'kick') {
-        // Removing someone mid-game would let the host knock out whoever is winning.
-        const { state } = await loadGame(db, code);
-        if (state.phase !== 'lobby') throw new HttpError(403, 'players can only be removed in the lobby');
-      }
       const res = await applyWithRetry(db, code, async (state, tokens) => {
         const id = await playerIdForToken(tokens, body.token);
         return runEngine(() => {
           if (action === 'start') return engine.stamp(state, engine.startGame(state, id), now());
           if (id !== state.hostId) throw new HttpError(403, 'only the host can kick');
+          // Checked on the same state that is updated, so a start cannot slip in between.
+          if (state.phase !== 'lobby') throw new HttpError(403, 'players can only be removed in the lobby');
           const targetId = body.targetId;
           const next = engine.removePlayer(state, targetId);
           const { [targetId]: _gone, ...rest } = tokens;
