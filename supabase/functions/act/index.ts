@@ -14,6 +14,15 @@ const db = supabaseDb(
   }),
 );
 
+// The address the platform saw. Cloudflare sets cf-connecting-ip itself; x-forwarded-for can carry
+// client-supplied entries in front, so only its last entry is trusted.
+function clientIp(req: Request): string {
+  const cf = req.headers.get('cf-connecting-ip') || req.headers.get('x-real-ip');
+  if (cf) return cf.trim();
+  const xff = (req.headers.get('x-forwarded-for') || '').split(',').map((s) => s.trim()).filter(Boolean);
+  return xff.length ? xff[xff.length - 1] : 'unknown';
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
   let body;
@@ -25,8 +34,9 @@ Deno.serve(async (req: Request) => {
     return Response.json({ error: 'invalid JSON' }, { status: 400, headers: cors });
   }
   try {
-    const { status, body: out } = await handleAct(db, body);
-    return Response.json(out, { status, headers: cors });
+    const { status, body: out } = await handleAct(db, body, { ip: clientIp(req) });
+    const headers = status === 429 ? { ...cors, 'retry-after': '30' } : cors;
+    return Response.json(out, { status, headers });
   } catch (e) {
     console.error(e);
     return Response.json({ error: 'internal error' }, { status: 500, headers: cors });

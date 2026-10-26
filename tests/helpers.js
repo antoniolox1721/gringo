@@ -1,4 +1,5 @@
 import { lonelyRoom } from '../supabase/functions/_shared/engine.js';
+import { memoryCounters } from '../supabase/functions/_shared/ratelimit.js';
 
 // Deck convention: deck[0] is the top (next card drawn). Discard convention: last element is the top.
 let nextUid = 1000;
@@ -46,8 +47,15 @@ export function seededRng(seed = 1) {
 export function fakeDb() {
   const rows = new Map();
   const tick = () => new Promise((r) => setImmediate(r));
+  const counters = memoryCounters();
   return {
     rows,
+    starts: [],
+    gate: async (...a) => counters.gate(...a),
+    miss: async (...a) => counters.miss(...a),
+    async logStart(nowMs, players) {
+      this.starts.push({ at: nowMs, players });
+    },
     async get(code) {
       await tick();
       const row = rows.get(code);

@@ -1,6 +1,7 @@
 // Storage helpers shared by the Edge Functions and the node tests.
 // `db` is any object with get(code), insert(row), update(code, expectedVersion, patch), touch(code, missing, caller)
-// purge(olderThanIso), purgeLonely(nowMs, lonelyMs, code?);
+// purge(olderThanIso), purgeLonely(nowMs, lonelyMs, code?), gate(ip, kind, nowMs, windowMs), miss(ip, nowMs, windowMs),
+// logStart(nowMs, players);
 // supabaseDb(client) adapts a supabase-js client to that interface.
 
 export class HttpError extends Error {
@@ -97,6 +98,21 @@ export function supabaseDb(client) {
     // statement merges the caller's entry, so concurrent polls cannot overwrite each other.
     async touch(code, missing, caller) {
       const { error } = await client.rpc('touch_seen', { p_code: code, p_missing: missing, p_caller: caller });
+      if (error) throw new Error(error.message);
+    },
+    // Per-address request counters (migration 0007); one round trip per request.
+    async gate(ip, kind, nowMs, windowMs) {
+      const { data, error } = await client.rpc('rate_gate', { p_ip: ip, p_kind: kind, p_now_ms: nowMs, p_window_ms: windowMs });
+      if (error) throw new Error(error.message);
+      return data;
+    },
+    async miss(ip, nowMs, windowMs) {
+      const { error } = await client.rpc('rate_miss', { p_ip: ip, p_now_ms: nowMs, p_window_ms: windowMs });
+      if (error) throw new Error(error.message);
+    },
+    // Lasting record of a game starting: a time and a player count, nothing else.
+    async logStart(nowMs, players) {
+      const { error } = await client.from('play_log').insert({ started_at: new Date(nowMs).toISOString(), players });
       if (error) throw new Error(error.message);
     },
     async purge(olderThanIso) {

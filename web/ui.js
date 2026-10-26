@@ -124,6 +124,7 @@ const FRIENDLY = [
   [/name required/i, 'Enter your name first.'],
   [/need at least 2/i, 'You need at least 2 players to start.'],
   [/no cards/i, 'There are no cards left to draw.'],
+  [/too many requests/i, 'Too many requests. Wait a moment and try again.'],
   [/too many spectators/i, 'Too many people are already watching that room.'],
 ];
 function friendly(e) {
@@ -134,6 +135,18 @@ function friendly(e) {
 }
 
 // ---- networking ------------------------------------------------------------
+// The broadcast channel is public, so anyone can send fake "changed" messages. A real one carries a
+// version we have not seen yet; anything else is ignored, and refetches from pushes are rate-limited.
+const PUSH_GAP_MS = 1500;
+let lastPush = 0;
+let pushTimer = null;
+function pushed(payload) {
+  if (payload && Number.isInteger(payload.version) && view && payload.version <= view.version) return;
+  const wait = lastPush + PUSH_GAP_MS - Date.now();
+  if (wait <= 0) { lastPush = Date.now(); refresh(); return; }
+  if (!pushTimer) pushTimer = setTimeout(() => { pushTimer = null; lastPush = Date.now(); refresh(); }, wait);
+}
+
 async function refresh() {
   if (!session || fetching) return;
   fetching = true;
@@ -542,7 +555,7 @@ function startSession(s) {
   pileHold = null;
   failures = 0;
   if (unsub) unsub();
-  unsub = subscribe(s.code, refresh);
+  unsub = subscribe(s.code, pushed);
   clearInterval(pollTimer);
   pollTimer = setInterval(refresh, pollMs);
   render();

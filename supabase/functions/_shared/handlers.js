@@ -1,4 +1,5 @@
 import * as engine from './engine.js';
+import { RATE, checkRate, noteMiss } from './ratelimit.js';
 import { HttpError, applyWithRetry, broadcast, hashToken, loadGame, playerIdForToken } from './store.js';
 
 const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
@@ -52,8 +53,9 @@ async function runEngine(fn) {
 
 const ok = (body) => ({ status: 200, body });
 
-export async function handleRoom(db, body, deps = {}) {
+async function roomInner(db, body, deps) {
   const { notify = broadcast, uuid = () => crypto.randomUUID(), rng = engine.secureRandom, now = Date.now, limits = engine.PRESENCE } = deps;
+  const applyL = (code, fn) => applyLogged(db, code, fn, now);
   return guarded(async () => {
     const action = body && body.action;
     if (action === 'create') {
@@ -120,7 +122,7 @@ export async function handleRoom(db, body, deps = {}) {
       if (bye || engine.absentPlayers(state, next, id, t, limits).length === 0) {
         return ok({ view: engine.viewFor(state, id) });
       }
-      const res = await applyWithRetry(db, code, (st, tk) =>
+      const res = await applyL(code, (st, tk) =>
         runEngine(() => withoutGoneTokens(st, engine.stamp(st, engine.dropAbsent(st, engine.absentPlayers(st, next, id, t, limits)), t), tk)),
       );
       await notify(code, res.version);
@@ -128,7 +130,7 @@ export async function handleRoom(db, body, deps = {}) {
     }
 
     if (action === 'leave') {
-      const res = await applyWithRetry(db, code, async (state, tokens) => {
+      const res = await applyL(code, async (state, tokens) => {
         const id = await playerIdForToken(tokens, body.token);
         return runEngine(() => withoutGoneTokens(state, engine.stamp(state, engine.dropAbsent(state, [id]), now()), tokens));
       });
@@ -137,7 +139,7 @@ export async function handleRoom(db, body, deps = {}) {
     }
 
     if (action === 'sit') {
-      const res = await applyWithRetry(db, code, async (state, tokens) => {
+      const res = await applyL(code, async (state, tokens) => {
         const id = await playerIdForToken(tokens, body.token);
         return runEngine(() => engine.stamp(state, engine.sit(state, id, body.want !== false), now()));
       });
@@ -146,7 +148,7 @@ export async function handleRoom(db, body, deps = {}) {
     }
 
     if (action === 'start' || action === 'kick') {
-      const res = await applyWithRetry(db, code, async (state, tokens) => {
+      const res = await applyL(code, async (state, tokens) => {
         const id = await playerIdForToken(tokens, body.token);
         return runEngine(() => {
           if (action === 'start') return engine.stamp(state, engine.startGame(state, id), now());
@@ -168,14 +170,15 @@ export async function handleRoom(db, body, deps = {}) {
   });
 }
 
-export async function handleAct(db, body, deps = {}) {
+async function actInner(db, body, deps) {
   const { notify = broadcast, now = Date.now, limits = engine.PRESENCE } = deps;
+  const applyL = (code, fn) => applyLogged(db, code, fn, now);
   return guarded(async () => {
     const code = cleanCode(body && body.code);
     const { action } = body;
     const args = body.args && typeof body.args === 'object' ? body.args : {};
     let playerId;
-    const res = await applyWithRetry(db, code, async (state, tokens) => {
+    const res = await applyL(code, async (state, tokens) => {
       playerId = await playerIdForToken(tokens, body.token);
       return runEngine(() => {
         // A slap that arrives after the window closed finds the game already scored.
@@ -187,6 +190,43 @@ export async function handleAct(db, body, deps = {}) {
     await notify(code, res.version);
     return ok({ view: engine.viewFor(res.state, playerId), ...res.extra });
   });
+}
+
+// Per-address limits wrap both endpoints; deps.ip is set by the Edge Function entry points.
+async function limited(db, deps, kind, run) {
+  const now = (deps.now || Date.now)();
+  const limits = deps.rate || RATE;
+  const blocked = await checkRate(db, deps.ip, kind, now, limits);
+  if (blocked) return blocked;
+  const res = await run();
+  await noteMiss(db, deps.ip, now, res.status, limits);
+  return res;
+}
+
+export function handleRoom(db, body, deps = {}) {
+  const action = body && body.action;
+  return limited(db, deps, action === 'create' ? 'create' : action === 'join' ? 'join' : '', () => roomInner(db, body, deps));
+}
+
+export function handleAct(db, body, deps = {}) {
+  return limited(db, deps, '', () => actInner(db, body, deps));
+}
+
+// Applies a change and records a game start (lobby or finished game -> setup) in the lasting log.
+async function applyLogged(db, code, fn, now) {
+  let prev;
+  const res = await applyWithRetry(db, code, (state, tokens) => {
+    prev = state;
+    return fn(state, tokens);
+  });
+  if (db.logStart && prev && prev.phase !== 'setup' && res.state.phase === 'setup') {
+    try {
+      await db.logStart(now(), res.state.players.length);
+    } catch {
+      // statistics must never break a game
+    }
+  }
+  return res;
 }
 
 function applyAction(state, id, action, args) {

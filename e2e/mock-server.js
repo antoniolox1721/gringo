@@ -6,6 +6,7 @@ import { randomUUID, randomInt } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as engine from '../supabase/functions/_shared/engine.js';
+import { RATE, checkRate, memoryCounters, noteMiss } from '../supabase/functions/_shared/ratelimit.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.resolve(here, '..', 'web');
@@ -28,6 +29,17 @@ const TEST_MODE = process.env.MOCK_TEST === '1';
 const STALE_MS = Number(process.env.MOCK_STALE_MS) || engine.PRESENCE.staleMs;
 const BYE_GRACE_MS = Math.min(engine.PRESENCE.byeGraceMs, STALE_MS / 3);
 const LIMITS = { staleMs: STALE_MS, byeGraceMs: BYE_GRACE_MS, idleMs: Number(process.env.MOCK_IDLE_MS) || engine.PRESENCE.idleMs, lonelyMs: Number(process.env.MOCK_LONELY_MS) || engine.PRESENCE.lonelyMs, endingMs: Number(process.env.MOCK_ENDING_MS) || engine.PRESENCE.endingMs };
+
+// The same per-address limits as the Edge Functions (MOCK_RATE_* raise them for tests that poll a lot).
+const LIMIT = { ...RATE, all: Number(process.env.MOCK_RATE_ALL) || RATE.all, create: Number(process.env.MOCK_RATE_CREATE) || RATE.create, join: Number(process.env.MOCK_RATE_JOIN) || RATE.join, misses: Number(process.env.MOCK_RATE_MISSES) || RATE.misses };
+const counters = memoryCounters();
+const limiterDb = { gate: (...a) => counters.gate(...a), miss: (...a) => counters.miss(...a) };
+const starts = []; // games started (time, players), like the play_log table
+
+// Records a game start: lobby or finished game -> setup.
+function logStart(before, after) {
+  if (before.phase !== 'setup' && after.phase === 'setup') starts.push({ at: Date.now(), players: after.players.length });
+}
 
 const rooms = new Map(); // code -> { state, tokens: Map(token -> playerId) }
 
@@ -102,7 +114,9 @@ function roomEndpoint(body) {
     case 'start': {
       const room = roomOf(body.code);
       const id = auth(room, body.token);
-      room.state = wrap(() => engine.stamp(room.state, engine.startGame(room.state, id, RNG), Date.now()));
+      const before = room.state;
+      room.state = wrap(() => engine.stamp(before, engine.startGame(before, id, RNG), Date.now()));
+      logStart(before, room.state);
       return { ok: true };
     }
     case 'kick': {
@@ -133,13 +147,16 @@ function roomEndpoint(body) {
         const before = room.state;
         room.state = wrap(() => engine.stamp(before, engine.dropAbsent(before, absent), t));
         dropTokens(room, before);
+        logStart(before, room.state);
       }
       return { view: engine.viewFor(room.state, id) };
     }
     case 'sit': {
       const room = roomOf(body.code);
       const id = auth(room, body.token);
-      room.state = wrap(() => engine.stamp(room.state, engine.sit(room.state, id, body.want !== false), Date.now()));
+      const before = room.state;
+      room.state = wrap(() => engine.stamp(before, engine.sit(before, id, body.want !== false), Date.now()));
+      logStart(before, room.state);
       return { ok: true };
     }
     case 'leave': {
@@ -148,6 +165,7 @@ function roomEndpoint(body) {
       const before = room.state;
       room.state = wrap(() => engine.stamp(before, engine.dropAbsent(before, [id]), Date.now()));
       dropTokens(room, before);
+      logStart(before, room.state);
       return { ok: true };
     }
     default:
@@ -188,6 +206,7 @@ function actEndpoint(body) {
     }
   });
   room.state = engine.stamp(s0, next, Date.now());
+  logStart(s0, room.state);
   return { view: engine.viewFor(room.state, id), ...extra };
 }
 
@@ -236,7 +255,23 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/functions/v1/room' || url.pathname === '/functions/v1/act') {
       if (req.method !== 'POST') throw new HttpError(400, 'POST only');
       const body = await readJson(req);
-      send(res, 200, url.pathname.endsWith('/room') ? roomEndpoint(body) : actEndpoint(body));
+      const isRoom = url.pathname.endsWith('/room');
+      // Tests can pretend to be another address (MOCK_TEST only).
+      const ip = (TEST_MODE && req.headers['x-test-ip']) || req.socket.remoteAddress || 'unknown';
+      const now = Date.now();
+      const kind = isRoom && (body.action === 'create' || body.action === 'join') ? body.action : '';
+      const blocked = await checkRate(limiterDb, ip, kind, now, LIMIT);
+      if (blocked) { send(res, blocked.status, blocked.body); return; }
+      try {
+        send(res, 200, isRoom ? roomEndpoint(body) : actEndpoint(body));
+      } catch (e) {
+        await noteMiss(limiterDb, ip, now, e.status === 403 || e.message === 'unknown room' ? 403 : e.status || 500, LIMIT);
+        throw e;
+      }
+      return;
+    }
+    if (TEST_MODE && url.pathname === '/__test/starts' && req.method === 'GET') {
+      send(res, 200, { starts });
       return;
     }
     if (TEST_MODE && url.pathname === '/__test/stack' && req.method === 'POST') {

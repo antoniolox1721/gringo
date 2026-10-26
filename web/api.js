@@ -46,7 +46,7 @@ function loadSupabase() {
   });
 }
 
-// Calls onChange on every broadcast and on (re)subscribe. Returns an unsubscribe function.
+// Calls onChange(payload) on every broadcast and onChange() on (re)subscribe. Returns an unsubscribe function.
 // Polling stays the fallback, so a failed realtime setup is silent by design.
 export function subscribe(code, onChange) {
   if (isMock) return () => {};
@@ -58,7 +58,7 @@ export function subscribe(code, onChange) {
     client = sb.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
     channel = client.channel(`game:${code}`);
     channel
-      .on('broadcast', { event: 'changed' }, () => onChange())
+      .on('broadcast', { event: 'changed' }, (m) => onChange(m && m.payload))
       .subscribe((status) => { if (status === 'SUBSCRIBED') onChange(); });
   }).catch(() => {});
   return () => {
