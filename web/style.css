@@ -239,10 +239,10 @@ button.small { min-height: 44px; padding: 6px 14px; font-size: .88rem; border-ra
 .kick.mini.armed { width: auto; padding: 0 9px; font-size: .74rem; }
 
 .hand { display: flex; justify-content: center; gap: 8px; }
-.pos-top .hand { --cw: min(var(--cw-top), calc((100vw - 60px) / var(--n) - 8px)); }
-.pos-bottom .hand { --cw: min(var(--cw-me), calc((min(100vw, 760px) - 40px) / var(--n) - 10px)); gap: 10px; padding-top: 6px; }
+.pos-top .hand { --cw: min(calc(var(--cw-top) * var(--ls, 1)), calc((100vw - 60px) / var(--n) - 8px)); }
+.pos-bottom .hand { --cw: min(calc(var(--cw-me) * var(--ls, 1)), calc((min(100vw, 760px) - 40px) / var(--n) - 10px)); gap: 10px; padding-top: 6px; }
 .pos-bottom { padding-bottom: 2px; }
-.pos-left, .pos-right { --cw: min(var(--cw-side), calc(var(--side-h, 44dvh) / var(--n) - 8px)); }
+.pos-left, .pos-right { --cw: min(calc(var(--cw-side) * var(--ls, 1)), calc((var(--side-h, 44dvh) - var(--side-trim, 0dvh)) / var(--n) - 8px)); }
 .pos-left .hand, .pos-right .hand { flex-direction: column; gap: 10px; }
 .pos-left .slot::after, .pos-right .slot::after { inset: -5px -4px; }
 .pos-top .hand { gap: 10px; }
@@ -514,8 +514,8 @@ input:focus-visible { outline: none; border-color: var(--focus); }
   .hint { align-self: end; min-height: 0; font-size: .88rem; padding: 6px 10px; }
   .actions { align-self: center; flex-wrap: wrap; }
   .actions .slapbtn { flex: 1 1 0; }
-  .pos-bottom .hand { --cw: min(var(--cw-me), calc((64vw - 40px) / var(--n) - 10px)); padding-top: 2px; }
-  .pos-left, .pos-right { --cw: min(var(--cw-side), calc(58dvh / var(--n) - 10px)); }
+  .pos-bottom .hand { --cw: min(calc(var(--cw-me) * var(--ls, 1)), calc((64vw - 40px) / var(--n) - 10px)); padding-top: 2px; }
+  .pos-left, .pos-right { --cw: min(calc(var(--cw-side) * var(--ls, 1)), calc(58dvh / var(--n) - 10px)); }
   .pos-left .chip, .pos-right .chip { min-height: 0; }
   .piles { --pw: min(var(--cw-pile), calc((100cqw - 48px) / 2.9), calc((100cqh - 30px) / 1.4)); grid-template-columns: auto auto auto; gap: 6px 18px; }
   .game.n3 { --cw-side: clamp(26px, 9dvh, 42px); }
@@ -660,3 +660,8 @@ button.link.again { margin-top: 6px; }
 .rule select { flex: none; min-height: 44px; padding: 6px 10px; font: inherit; border-radius: 10px; border: 2px solid transparent; background: var(--stock); color: #132220; }
 .house { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .house li { font-size: .78rem; font-weight: 650; padding: 4px 10px; border-radius: 999px; background: var(--paper-line); color: var(--paper-ink); }
+
+/* Long hands wrap into lines: rows above and below the table, columns at the sides. */
+.hand.lined { display: grid; justify-content: center; align-content: start; gap: 6px 8px; }
+.pos-top .hand.lined, .pos-bottom .hand.lined { grid-template-columns: repeat(var(--n), max-content); }
+.pos-left .hand.lined, .pos-right .hand.lined { grid-auto-flow: column; grid-template-rows: repeat(var(--n), max-content); gap: 6px 8px; }

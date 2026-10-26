@@ -18,7 +18,7 @@ const JUNK = [
   [0, 1], [2, 3], [1, 3], 'p', 's', 'r', 0, 1, 2, 3, 'p1', 'p2',
 ];
 const ACTS = ['peekSetup', 'draw', 'keep', 'discard', 'power', 'kingLook', 'confirmKing', 'skipPower', 'slap', 'gringo', 'rps', '__proto__', 'toString', 7, null];
-const ROOM_ACTS = ['create', 'join', 'view', 'start', 'kick', 'leave', '__proto__', null];
+const ROOM_ACTS = ['create', 'join', 'view', 'start', 'kick', 'leave', 'sit', '__proto__', null];
 
 const deckOf = (hands) => hands.map((h) => h);
 function game(kind) {
@@ -47,6 +47,16 @@ function game(kind) {
   }
   return g;
 }
+const RULE_SETS = [
+  {}, { jackAnyPlayers: true }, { gringoBlocksSwaps: false }, { slapOthers: false }, { slapGive: false }, { multiSlap: true },
+  { missPenalty: 3 }, { jackAnyPlayers: true, gringoBlocksSwaps: false, slapGive: false, multiSlap: true, missPenalty: 2 },
+];
+// Every state gets a spectator ('w') and random house rules, so both are fuzzed in every phase.
+const withExtras = (state) => ({
+  ...state,
+  rules: engine.cleanRules(pick(RULE_SETS)),
+  spectators: [{ id: 'w', name: 'w', wantsIn: rand() < 0.5 }],
+});
 const KINDS = ['setup', 'turns', 'drawn', 'queen', 'king', 'king2', 'jack', 'final', 'rps'];
 
 const cardCount = (s) =>
@@ -55,7 +65,7 @@ const cardCount = (s) =>
 async function seed(state) {
   const db = fakeDb();
   const tokens = {};
-  for (const p of state.players) tokens[p.id] = await hashToken(`t${p.id}`);
+  for (const p of [...state.players, ...(state.spectators || [])]) tokens[p.id] = await hashToken(`t${p.id}`);
   db.rows.set('ABCD', { code: 'ABCD', state, tokens, version: state.version });
   return db;
 }
@@ -84,13 +94,13 @@ function assertNoLeak(state, view, who) {
 test('junk from a hostile client never crashes, never changes the card count, never leaks a hidden card', async () => {
   for (const kind of KINDS) {
     for (let round = 0; round < 120; round++) {
-      let state = game(kind);
+      let state = withExtras(game(kind));
       const db = await seed(state);
       const before = cardCount(state);
       for (let i = 0; i < 6; i++) {
-        const who = pick(['p0', 'p1', 'p2']);
+        const who = pick(['p0', 'p1', 'p2', 'w']);
         const args = {};
-        for (const k of ['slot', 'slots', 'type', 'targetId', 'mine', 'theirs', 'ownerId', 'giveSlot', 'swap', 'pick', 'J', 'Q', 'K', 'swapWithSlot']) {
+        for (const k of ['firstId', 'slot', 'slots', 'type', 'targetId', 'mine', 'theirs', 'ownerId', 'giveSlot', 'swap', 'pick', 'J', 'Q', 'K', 'swapWithSlot']) {
           if (rand() < 0.6) args[k] = pick(JUNK);
         }
         const action = pick(ACTS);
@@ -103,7 +113,7 @@ test('junk from a hostile client never crashes, never changes the card count, ne
         state = db.rows.get('ABCD').state;
         assert.equal(cardCount(state), before, `${kind}: cards created or destroyed by ${JSON.stringify(body)}`);
         if (r.body.view) assertNoLeak(state, r.body.view, who);
-        for (const id of ['p0', 'p1', 'p2']) {
+        for (const id of ['p0', 'p1', 'p2', 'w']) {
           const v = await handleRoom(db, { action: 'view', code: 'ABCD', token: `t${id}` }, quiet);
           assert.equal(v.status, 200);
           assertNoLeak(state, v.body.view, id);

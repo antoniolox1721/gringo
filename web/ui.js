@@ -837,6 +837,10 @@ function slotHtml(p, e, mode) {
     `${tap ? '' : ' tabindex="-1" aria-disabled="true"'} aria-label="${esc(label)}">${inner}</button>`;
 }
 
+// Cards per line: sides run in short columns because the table is tall and narrow.
+const HAND_CAP = { top: 7, bottom: 6, left: 4, right: 4 };
+const handLines = (n, pos) => Math.max(1, Math.ceil(n / HAND_CAP[pos]));
+
 function seatHtml(p, pos, mode) {
   const isMe = p.id === view.you;
   const rot = pos === 'left' ? 90 : pos === 'right' ? -90 : 0;
@@ -857,11 +861,16 @@ function seatHtml(p, pos, mode) {
   const holding = inPlay() && view.hasDrawn && view.turnId === p.id && !isMe;
   const held = holding
     ? `<div class="held-mini" data-key="held">${backHtml(ghosts.has(`held:${p.id}`) ? 'ghost' : '', `held:${p.id}`)}<small>drew</small></div>` : '';
-  return `<section class="seat pos-${pos}${isMe ? ' me' : ''}${active ? ' active' : ''}${p.connected || reveal ? '' : ' offline'}${won && reveal.settled ? ' winner' : ''}" data-key="seat:${esc(p.id)}" data-player="${esc(p.id)}" data-rot="${rot}" style="--seat: var(--seat-${seatIndex(p.id)}); --n: ${p.hand.length}">
+  // A long hand (penalty cards) wraps into balanced lines instead of shrinking to a sliver:
+  // --n is the number of cards along one line, --ls scales the cards down for the extra lines.
+  const lines = handLines(p.hand.length, pos);
+  const per = Math.max(1, Math.ceil(p.hand.length / lines));
+  const ls = (1 / (1 + 0.28 * (lines - 1))).toFixed(3);
+  return `<section class="seat pos-${pos}${isMe ? ' me' : ''}${active ? ' active' : ''}${p.connected || reveal ? '' : ' offline'}${won && reveal.settled ? ' winner' : ''}" data-key="seat:${esc(p.id)}" data-player="${esc(p.id)}" data-rot="${rot}" style="--seat: var(--seat-${seatIndex(p.id)}); --n: ${per}; --ls: ${ls}">
     <i class="ring" aria-hidden="true"></i>
     <div class="chip"><span class="dot" aria-hidden="true"></span><b class="name">${esc(p.name)}</b>${isMe ? '<span class="you">you</span>' : ''}
       <span class="count" aria-label="${n} cards">${n}</span>${badges}${total}</div>
-    <div class="hand">${p.hand.map((e) => slotHtml(p, e, mode)).join('')}</div>${held}
+    <div class="hand${lines > 1 ? ' lined' : ''}">${p.hand.map((e) => slotHtml(p, e, mode)).join('')}</div>${held}
   </section>`;
 }
 
@@ -875,6 +884,9 @@ function gameHtml() {
   const order = myIdx < 0 ? view.players.slice() : [...view.players.slice(myIdx + 1), ...view.players.slice(0, myIdx)];
   const POS = { 1: ['top'], 2: ['left', 'right'], 3: ['left', 'top', 'right'] }[order.length] || ['top', 'left', 'right'];
   const seats = order.map((p, i) => seatHtml(p, POS[i] || 'top', mode)).join('');
+  // Extra lines of cards above and below the table take height from the side columns.
+  const topSeat = order.find((p, i) => (POS[i] || 'top') === 'top');
+  const trim = ((topSeat ? handLines(topSeat.hand.length, 'top') - 1 : 0) * 8 + (seatOf ? handLines(seatOf.hand.length, 'bottom') - 1 : 0) * 10);
   const myTurn = inPlay() && view.turnId === view.you;
   const pend = view.pending[0];
 
@@ -942,7 +954,7 @@ function gameHtml() {
   const tail = over ? endPanelHtml(plan) : `${status}
     ${seatOf ? seatHtml(seatOf, 'bottom', mode) : ''}
     <div class="actions" data-key="actions">${btns.join('')}</div>`;
-  return `<div class="screen game n${view.players.length}${local.armed || local.giving ? ' slapping' : ''}${over ? ` over${plan.settled ? ' settled' : ''}` : ''}" data-key="game" style="--me: var(--seat-${seatIndex(view.you)})">${barHtml(true, banner)}
+  return `<div class="screen game n${view.players.length}${local.armed || local.giving ? ' slapping' : ''}${over ? ` over${plan.settled ? ' settled' : ''}` : ''}" data-key="game" style="--me: var(--seat-${seatIndex(view.you)}); --side-trim: ${trim}dvh">${barHtml(true, banner)}
     <div class="table" data-key="table">${seats}${center}</div>
     ${tail}${confirm}</div>`;
 }
