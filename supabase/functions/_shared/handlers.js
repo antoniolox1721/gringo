@@ -52,7 +52,7 @@ export async function handleRoom(db, body, deps = {}) {
       const playerId = uuid();
       const token = uuid();
       const tokens = { [playerId]: await hashToken(token) };
-      const state = engine.createGame(playerId, name);
+      const state = engine.createGame(playerId, name, body.rules);
       // Housekeeping: rooms nobody has touched for a day are dead. Best effort.
       if (db.purge) await db.purge(new Date(now() - ROOM_TTL_MS).toISOString()).catch(() => {});
       if (db.purgeLonely) await db.purgeLonely(now(), limits.lonelyMs).catch(() => {});
@@ -74,7 +74,7 @@ export async function handleRoom(db, body, deps = {}) {
       const tokenHash = await hashToken(token);
       const res = await applyWithRetry(db, code, (state, tokens) =>
         runEngine(() => ({
-          state: engine.addPlayer(state, playerId, name),
+          state: engine.joinRoom(state, playerId, name),
           tokens: { ...tokens, [playerId]: tokenHash },
         })),
       );
@@ -92,7 +92,7 @@ export async function handleRoom(db, body, deps = {}) {
       const bye = body.bye === true;
       const mine = bye ? t - (limits.staleMs - limits.byeGraceMs) : t;
       const missing = {};
-      for (const p of state.players) if (seen[p.id] === undefined) missing[p.id] = t;
+      for (const p of [...state.players, ...(state.spectators || [])]) if (seen[p.id] === undefined) missing[p.id] = t;
       // Polls closer than 2 s apart skip the write, so a spammed loop cannot hammer the database.
       const fresh = seen[id] !== undefined && t - seen[id] < 2000;
       if (db.touch && (bye || !fresh || Object.keys(missing).length > 0)) await db.touch(code, missing, { [id]: mine });
@@ -127,6 +127,15 @@ export async function handleRoom(db, body, deps = {}) {
       return ok({ ok: true });
     }
 
+    if (action === 'sit') {
+      const res = await applyWithRetry(db, code, async (state, tokens) => {
+        const id = await playerIdForToken(tokens, body.token);
+        return runEngine(() => engine.stamp(state, engine.sit(state, id, body.want !== false), now()));
+      });
+      await notify(code, res.version);
+      return ok({ ok: true });
+    }
+
     if (action === 'start' || action === 'kick') {
       const res = await applyWithRetry(db, code, async (state, tokens) => {
         const id = await playerIdForToken(tokens, body.token);
@@ -134,7 +143,8 @@ export async function handleRoom(db, body, deps = {}) {
           if (action === 'start') return engine.stamp(state, engine.startGame(state, id), now());
           if (id !== state.hostId) throw new HttpError(403, 'only the host can kick');
           // Checked on the same state that is updated, so a start cannot slip in between.
-          if (state.phase !== 'lobby') throw new HttpError(403, 'players can only be removed in the lobby');
+          const watcher = (state.spectators || []).some((x) => x.id === body.targetId);
+          if (state.phase !== 'lobby' && !watcher) throw new HttpError(403, 'players can only be removed in the lobby');
           const targetId = body.targetId;
           const next = engine.removePlayer(state, targetId);
           const { [targetId]: _gone, ...rest } = tokens;

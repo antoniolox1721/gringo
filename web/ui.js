@@ -31,7 +31,7 @@ const ghosts = new Set(); // fx keys hidden while a flying card is on its way th
 let pileHold = null; // what the pile showed before a card started flying onto it
 
 function freshLocal() {
-  return { armed: false, giving: null, peekSel: [], jMine: null, kickArm: null, leaveArm: false, confirmGringo: false };
+  return { armed: false, giving: null, peekSel: [], jMine: null, jOwner: null, kickArm: null, leaveArm: false, confirmGringo: false };
 }
 
 // ---- storage (always guarded) ---------------------------------------------
@@ -81,6 +81,8 @@ function cardHtml(card, { cls = '', fx = '', stamp = false } = {}) {
 const backHtml = (cls = '', fx = '') => `<span class="card back${cls ? ` ${cls}` : ''}"${fx ? ` data-fx="${esc(fx)}"` : ''}></span>`;
 
 const me = () => view && view.players.find((p) => p.id === view.you);
+// Whose seat anchors the table. Spectators see it from the first seat's side, with nobody marked as them.
+const anchor = () => me() || (view && view.spectator ? view.players[0] : null);
 const nameOf = (id) => {
   const p = view && view.players.find((x) => x.id === id);
   return p ? p.name : 'someone';
@@ -122,6 +124,7 @@ const FRIENDLY = [
   [/name required/i, 'Enter your name first.'],
   [/need at least 2/i, 'You need at least 2 players to start.'],
   [/no cards/i, 'There are no cards left to draw.'],
+  [/too many spectators/i, 'Too many people are already watching that room.'],
 ];
 function friendly(e) {
   const msg = (e && e.message) || 'Something went wrong.';
@@ -182,6 +185,8 @@ function watchEnding(v) {
 function applyView(v) {
   if (!v) return;
   if (view && v.version < view.version) return; // stale response
+  // Neither seated nor watching: the host removed them, or they timed out as a spectator.
+  if (!v.spectator && !v.players.some((p) => p.id === v.you)) { leave('You are no longer in that room.'); return; }
   watchEnding(v);
   const prev = view;
   if (prev && v.version === prev.version) { view = v; render(); return; }
@@ -602,9 +607,43 @@ function barHtml(brand = true, plaque = '') {
   const on = soundOn();
   const me = session && view && view.players.find((p) => p.id === view.you);
   const exit = me && me.connected && ['setup', 'turns', 'final', 'ending', 'rps'].includes(view.phase)
-    ? `<button class="leave${local.leaveArm ? ' armed' : ''}" data-act="exit">${local.leaveArm ? 'End game?' : 'Leave'}</button>` : '';
+    ? `<button class="leave${local.leaveArm ? ' armed' : ''}" data-act="exit">${local.leaveArm ? 'End game?' : 'Leave'}</button>`
+    : session && view && view.spectator && view.phase !== 'lobby' ? '<button class="leave" data-act="leave">Leave</button>' : '';
   return `<header class="bar" data-key="bar">${brand ? '<span class="brand">Gringo</span>' : ''}${room}${net}${exit}
     <button class="icon sound${on ? ' on' : ''}" data-act="sound" aria-pressed="${on}" aria-label="Sound effects" title="Sound ${on ? 'on' : 'off'}">${SOUND_ICON}</button></header>`;
+}
+
+// House rules offered when creating a room. `invert` shows a rule that is on by default as a switch
+// that turns the unusual behaviour on, so every checkbox reads "this room does something different".
+const RULE_UI = [
+  { key: 'gringoBlocksSwaps', invert: true, label: 'Swaps still work after Gringo', hint: 'Jack and King can swap cards with the player who called it.' },
+  { key: 'jackAnyPlayers', label: 'Jack swaps any two players', hint: 'Blind swap between any two players, not only with you.' },
+  { key: 'slapOthers', invert: true, label: 'Slap only your own cards', hint: 'Slapping a card from another hand is not allowed.' },
+  { key: 'slapGive', invert: true, label: 'Free slaps', hint: 'Slapping another hand takes the card without giving one back.' },
+  { key: 'multiSlap', label: 'Slap again and again', hint: 'The pile can be slapped again right after a slap.' },
+];
+const RULE_DEFAULTS = { gringoBlocksSwaps: true, jackAnyPlayers: false, slapOthers: true, slapGive: true, multiSlap: false, missPenalty: 1 };
+let homeRules = { ...RULE_DEFAULTS };
+let homeRulesOpen = false;
+
+function customRulesHtml() {
+  const rows = RULE_UI.map((r) => `<label class="rule"><input type="checkbox" data-rule="${r.key}"${(r.invert ? !homeRules[r.key] : homeRules[r.key]) ? ' checked' : ''}>
+    <span><b>${r.label}</b><small>${r.hint}</small></span></label>`).join('');
+  const pen = [1, 2, 3].map((n) => `<option value="${n}"${homeRules.missPenalty === n ? ' selected' : ''}>${n} card${n > 1 ? 's' : ''}</option>`).join('');
+  return `<details class="custom" data-key="custom"${homeRulesOpen ? ' open' : ''}><summary>Custom rules</summary>${rows}
+    <label class="rule select"><span><b>Wrong slap costs</b><small>Cards taken for a slap that misses.</small></span><select data-rule="missPenalty">${pen}</select></label></details>`;
+}
+
+// Rules that differ from the standard game, as short sentences (shown in the lobby).
+function ruleNotes(rules) {
+  const out = [];
+  if (!rules.gringoBlocksSwaps) out.push('Swaps still work after Gringo');
+  if (rules.jackAnyPlayers) out.push('Jack swaps any two players');
+  if (!rules.slapOthers) out.push('Only your own cards can be slapped');
+  else if (!rules.slapGive) out.push('Free slaps: no card given back');
+  if (rules.multiSlap) out.push('The pile can be slapped again after a slap');
+  if (rules.missPenalty !== 1) out.push(`A wrong slap costs ${rules.missPenalty} cards`);
+  return out;
 }
 
 function homeHtml() {
@@ -616,6 +655,7 @@ function homeHtml() {
     <form id="home" class="tray" novalidate>
       <label for="name">Your name</label>
       <input id="name" maxlength="16" autocomplete="nickname" placeholder="Name" enterkeyhint="go">
+      ${customRulesHtml()}
       <button class="primary" type="submit" data-act="create">Create room</button>
       <div class="or"><span>or join a room</span></div>
       <label for="code">Room code</label>
@@ -658,17 +698,25 @@ function lobbyHtml() {
       ${isHost && p.id !== view.you ? kickHtml(p) : ''}</li>`).join('');
   const empty = Array.from({ length: 4 - view.players.length }, (_, i) => `<div class="open-seat" data-key="open:${i}"><span class="dot"></span><span class="pname">Open seat</span></div>`).join('');
   const canStart = isHost && view.players.length >= 2;
+  const open = view.players.length < 4;
+  const rail = view.spectators.length
+    ? `<h2>Watching <span class="muted">${view.spectators.length}</span></h2>
+      <ul class="plist rail">${view.spectators.map((x) => `<li data-key="w:${esc(x.id)}"><span class="dot"></span><span class="pname">${esc(x.name)}</span>${x.id === view.you ? '<em>you</em>' : ''}${isHost ? kickHtml(x) : ''}</li>`).join('')}</ul>` : '';
+  const foot = view.spectator
+    ? `${open ? '<button class="primary" data-act="sit">Take a seat</button>' : '<p class="muted note">The room is full, so you are watching. A seat opens up if someone leaves.</p>'}`
+    : isHost
+      ? `<button class="primary" data-act="start" ${canStart ? '' : 'disabled'}>Start game</button>
+           <p class="muted note">${canStart ? 'Everyone in? Start when ready.' : 'Start unlocks when a second player joins.'}</p>`
+      : `<p class="muted note waiting"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Waiting for ${esc(nameOf(view.hostId))} to start the game.</p>`;
   return `<div class="screen lobby" data-key="lobby">${barHtml()}
     <section class="placard">
       <p class="eyebrow">Share this code with your friends</p>
       <div class="codecard"><span class="bigcode" id="roomcode">${esc(session.code)}</span>
         <button class="small" data-act="copy" aria-label="Copy room code">Copy</button></div>
+      ${ruleNotes(view.rules).length ? `<ul class="house" aria-label="House rules">${ruleNotes(view.rules).map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
       <h2>Players <span class="muted">${view.players.length} of 4</span></h2>
       <ul class="plist">${rows}</ul>${empty ? `<div class="plist open">${empty}</div>` : ''}
-      ${isHost
-        ? `<button class="primary" data-act="start" ${canStart ? '' : 'disabled'}>Start game</button>
-           <p class="muted note">${canStart ? 'Everyone in? Start when ready.' : 'Start unlocks when a second player joins.'}</p>`
-        : `<p class="muted note waiting"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Waiting for ${esc(nameOf(view.hostId))} to start the game.</p>`}
+      ${rail}${foot}
       <button class="link" data-act="leave">Leave room</button>
     </section></div>`;
 }
@@ -681,6 +729,11 @@ function kickHtml(p, compact = false) {
 
 // What tapping a slot means right now. `mine` marks states where this player must act.
 function currentMode() {
+  if (view.spectator) {
+    const hint = view.phase === 'setup' ? 'Players are peeking at their first cards.'
+      : view.phase === 'turns' || view.phase === 'final' ? `${esc(nameOf(view.turnId))}'s turn.` : '';
+    return { id: 'watch', hint: `<b>You are watching.</b> ${hint}`.trim(), can: () => false };
+  }
   const pend = view.pending[0];
   const myTurn = view.turnId === view.you;
   const top = view.discardTop ? cardLabel(view.discardTop) : '';
@@ -699,14 +752,25 @@ function currentMode() {
   if (local.armed) {
     const hint = !view.discardTop ? '<b>Slap:</b> the pile is empty, so any slap misses.'
       : view.discardClaimed ? `<b>Slap:</b> ${esc(top)} is already claimed. A slap now costs a penalty card.`
-        : `<b>Slap:</b> tap any card that matches ${esc(top)}. A miss costs a penalty card.`;
-    return { id: 'slap', mine: true, slap: true, can: () => true, hint };
+        : `<b>Slap:</b> tap ${view.rules.slapOthers ? 'any' : 'one of your own'} card${view.rules.slapOthers ? '' : 's'} that match${view.rules.slapOthers ? 'es' : ''} ${esc(top)}. A miss costs ${view.rules.missPenalty === 1 ? 'a penalty card' : `${view.rules.missPenalty} penalty cards`}.`;
+    return { id: 'slap', mine: true, slap: true, can: view.rules.slapOthers ? () => true : (mine) => mine, hint };
   }
   if (view.phase === 'ending') return { id: 'ending', hint: '<b>Round over.</b> Slap a match now, before the cards are counted.', can: () => false };
   if (pend && pend.by === view.you) {
     if (pend.type === 'J') {
-      if (local.jMine === null) return { id: 'J1', mine: true, hint: '<b>Jack:</b> tap one of YOUR cards to swap away.', can: (mine) => mine };
-      return { id: 'J2', mine: true, hint: '<b>Jack:</b> now tap an opponent card. The swap is blind.', can: (mine, p) => !mine && !p.gringo, selected: (mine, slot) => mine && slot === local.jMine };
+      const R = view.rules;
+      const ok = (p) => !(R.gringoBlocksSwaps && p.gringo);
+      if (local.jMine === null) {
+        return R.jackAnyPlayers
+          ? { id: 'J1', mine: true, hint: '<b>Jack:</b> tap any card to swap away.', can: (mine, p) => ok(p) }
+          : { id: 'J1', mine: true, hint: '<b>Jack:</b> tap one of YOUR cards to swap away.', can: (mine) => mine };
+      }
+      return {
+        id: 'J2', mine: true,
+        hint: R.jackAnyPlayers ? '<b>Jack:</b> now tap a card of a different player. The swap is blind.' : '<b>Jack:</b> now tap an opponent card. The swap is blind.',
+        can: (mine, p) => p.id !== local.jOwner && ok(p),
+        selected: (mine, slot, p) => p.id === local.jOwner && slot === local.jMine,
+      };
     }
     if (pend.type === 'Q') return { id: 'Q', mine: true, hint: '<b>Queen:</b> tap any card to look at it.', can: () => true };
     if (!pend.revealed) return { id: 'K1', mine: true, hint: '<b>King:</b> tap an opponent card to look at it.', can: (mine) => !mine };
@@ -751,7 +815,7 @@ function slotHtml(p, e, mode) {
   const mine = p.id === view.you;
   const key = `slot:${p.id}:${e.slot}`;
   const tap = mode && !e.empty && mode.can(mine, p, e);
-  const sel = mode && mode.selected && mode.selected(mine, e.slot);
+  const sel = mode && mode.selected && mode.selected(mine, e.slot, p);
   const rv = reveals.get(key);
   const pend = view.pending[0];
   const kingHeld = !rv && e.card && inPlay() && pend && pend.type === 'K' && pend.by === view.you && pend.revealed;
@@ -806,7 +870,8 @@ function gameHtml() {
   const plan = revealPlan();
   const mode = over ? { id: 'over', hint: '', can: () => false } : currentMode();
   const m = me();
-  const myIdx = view.players.findIndex((p) => p.id === view.you);
+  const seatOf = anchor();
+  const myIdx = view.players.findIndex((p) => seatOf && p.id === seatOf.id);
   const order = myIdx < 0 ? view.players.slice() : [...view.players.slice(myIdx + 1), ...view.players.slice(0, myIdx)];
   const POS = { 1: ['top'], 2: ['left', 'right'], 3: ['left', 'top', 'right'] }[order.length] || ['top', 'left', 'right'];
   const seats = order.map((p, i) => seatHtml(p, POS[i] || 'top', mode)).join('');
@@ -873,19 +938,24 @@ function gameHtml() {
       <div class="confirm-btns"><button data-act="gringo-no" data-key="c:no">Not yet</button><button class="call" data-act="gringo-yes" data-key="c:yes">Call Gringo</button></div>
     </div></div>` : '';
 
-  const status = `<p class="hint${mode.slap ? ' slap' : mode.mine ? ' mine' : ''}" id="hint" data-key="hint" aria-live="polite"><span>${mode.hint}</span></p>`;
+  const status = `<p class="hint${mode.slap ? ' slap' : mode.mine ? ' mine' : ''}" id="hint" data-key="hint" aria-live="polite"><span>${mode.hint}${watchersHtml()}</span></p>`;
   const tail = over ? endPanelHtml(plan) : `${status}
-    ${m ? seatHtml(m, 'bottom', mode) : ''}
+    ${seatOf ? seatHtml(seatOf, 'bottom', mode) : ''}
     <div class="actions" data-key="actions">${btns.join('')}</div>`;
   return `<div class="screen game n${view.players.length}${local.armed || local.giving ? ' slapping' : ''}${over ? ` over${plan.settled ? ' settled' : ''}` : ''}" data-key="game" style="--me: var(--seat-${seatIndex(view.you)})">${barHtml(true, banner)}
     <div class="table" data-key="table">${seats}${center}</div>
     ${tail}${confirm}</div>`;
 }
 
+function watchersHtml() {
+  const names = view.spectators.map((x) => esc(x.name));
+  return names.length ? `<small class="watchers">Watching: ${names.join(', ')}</small>` : '';
+}
+
 // What sits under the table once the game is over: the verdict, and the next step.
 function endPanelHtml() {
   const m = me();
-  const mine = m ? seatHtml(m, 'bottom', { can: () => false }) : '';
+  const mine = anchor() ? seatHtml(anchor(), 'bottom', { can: () => false }) : '';
   let inner;
   if (view.phase === 'rps') {
     const r = view.rps;
@@ -938,12 +1008,24 @@ function leftNote() {
 function againHtml() {
   const voted = view.rematch || [];
   const live = view.players.filter((p) => p.connected);
+  const queued = view.spectators.filter((x) => x.wantsIn);
+  const free = Math.max(0, 4 - live.length);
+  if (view.spectator) {
+    const mineQ = queued.findIndex((x) => x.id === view.you);
+    const queuedNote = mineQ < 0 ? (free ? '<p class="muted again-note">Ask for a seat and you play in the next game.</p>' : '<p class="muted again-note">The table is full, but you can line up in case someone leaves.</p>')
+      : mineQ < free ? '<p class="muted again-note">You have a seat in the next game.</p>' : '<p class="muted again-note">You are in line. A seat opens up if someone does not play again.</p>';
+    return `${mineQ < 0 ? '<button class="primary again" data-act="sit">Join the next game</button>'
+      : '<button class="primary again" data-act="unsit">Leave the line</button>'}${queuedNote}
+    <button class="link again" data-act="leave">Back to start</button>`;
+  }
   const waiting = live.filter((p) => !voted.includes(p.id)).map((p) => esc(p.name));
   const mine = voted.includes(view.you);
-  if (live.length < 2) return '<button class="primary again" data-act="leave">Back to start</button>';
+  const joining = queued.slice(0, free).map((x) => esc(x.name));
+  if (live.length + joining.length < 2) return '<button class="primary again" data-act="leave">Back to start</button>';
   const label = mine ? `Waiting for ${waiting.join(' & ')}` : `Play again${voted.length ? ` (${voted.length}/${live.length} ready)` : ''}`;
   const note = mine ? '' : '<p class="muted again-note">Everyone has to agree. The winner starts.</p>';
-  return `<button class="primary again" data-act="again"${mine ? ' disabled' : ''}>${label}</button>${note}
+  const joinNote = joining.length ? `<p class="muted again-note">${joining.join(' & ')} ${joining.length > 1 ? 'are' : 'is'} joining the next game.</p>` : '';
+  return `<button class="primary again" data-act="again"${mine ? ' disabled' : ''}>${label}</button>${note}${joinNote}
     <button class="link again" data-act="leave">Back to start</button>`;
 }
 
@@ -990,6 +1072,8 @@ document.addEventListener('click', (ev) => {
     case 'kingswap': act('confirmKing', { swap: true }); return;
     case 'rps': act('rps', { pick: el.dataset.pick }); return;
     case 'again': act('rematch'); return;
+    case 'sit': roomCall('sit', { want: true }); return;
+    case 'unsit': roomCall('sit', { want: false }); return;
     case 'slap':
       if (local.armed || local.giving) local = { ...local, armed: false, giving: null };
       else { local = { ...local, armed: true }; buzz(8); }
@@ -1004,9 +1088,19 @@ document.addEventListener('submit', (ev) => {
   doCreate();
 });
 
+document.addEventListener('change', (ev) => {
+  const key = ev.target.dataset && ev.target.dataset.rule;
+  if (!key) return;
+  const rule = RULE_UI.find((r) => r.key === key);
+  homeRules = { ...homeRules, [key]: rule ? ev.target.checked !== !!rule.invert : Number(ev.target.value) };
+});
+document.addEventListener('toggle', (ev) => {
+  if (ev.target.matches && ev.target.matches('details.custom')) homeRulesOpen = ev.target.open;
+}, true);
+
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && (local.armed || local.giving || local.jMine !== null || local.confirmGringo)) {
-    local = { ...local, armed: false, giving: null, jMine: null, confirmGringo: false };
+    local = { ...local, armed: false, giving: null, jMine: null, jOwner: null, confirmGringo: false };
     render();
   }
   if (ev.key === 'Enter' && ev.target.id === 'code') { ev.preventDefault(); doJoin(); }
@@ -1042,7 +1136,7 @@ async function doCreate() {
   if (!name) { homeFail('Enter your name first.', 'name'); return; }
   busy = true;
   try {
-    const r = await call('room', { action: 'create', name });
+    const r = await call('room', { action: 'create', name, rules: homeRules });
     homeError = '';
     startSession({ code: r.code, playerId: r.playerId, token: r.token });
   } catch (e) { homeFail(friendly(e)); } finally { busy = false; }
@@ -1082,14 +1176,14 @@ function onSlot(ownerId, slot) {
   switch (mode.id) {
     case 'give': slapAct({ ownerId: local.giving.ownerId, slot: local.giving.slot, giveSlot: slot }); return;
     case 'slap': {
-      if (mine || !me().hand.some((s) => !s.empty)) { slapAct({ ownerId, slot }); return; }
+      if (mine || !view.rules.slapGive || !me().hand.some((s) => !s.empty)) { slapAct({ ownerId, slot }); return; }
       local.giving = { ownerId, slot };
       local.armed = false;
       render();
       return;
     }
-    case 'J1': local.jMine = slot; render(); return;
-    case 'J2': act('power', { type: 'J', J: { mine: local.jMine, targetId: ownerId, theirs: slot } }); return;
+    case 'J1': local.jMine = slot; local.jOwner = ownerId; render(); return;
+    case 'J2': act('power', { type: 'J', J: { firstId: local.jOwner, mine: local.jMine, targetId: ownerId, theirs: slot } }); return;
     case 'Q': power('Q', ownerId, slot); return;
     case 'K1': power('K', ownerId, slot); return;
     case 'K2': kingLook(slot); return;
@@ -1101,7 +1195,7 @@ function onSlot(ownerId, slot) {
 async function slapAct(args) {
   const resp = await act('slap', args);
   if (!resp) return;
-  if (resp.ok) { toast('Slap! Card played.', 'ok'); buzz(25); } else { toast('Missed. You take a penalty card.', 'err'); }
+  if (resp.ok) { toast('Slap! Card played.', 'ok'); buzz(25); } else { toast(view.rules.missPenalty === 1 ? 'Missed. You take a penalty card.' : `Missed. You take ${view.rules.missPenalty} penalty cards.`, 'err'); }
 }
 
 // ---- boot ------------------------------------------------------------------

@@ -642,3 +642,21 @@ button.link.again { margin-top: 6px; }
   .flipper .rb { display: none; }
   .flipper .rf { opacity: 1; }
 }
+
+.hint .watchers { display: block; font-size: .72rem; opacity: .7; margin-top: 2px; }
+.plist.rail li { opacity: .85; }
+
+.custom { margin: 12px 0 0; }
+.custom summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 650; font-size: .92rem; color: var(--on-felt-muted); list-style: none; }
+.custom summary::-webkit-details-marker { display: none; }
+.custom summary::before { content: "+"; display: inline-grid; place-items: center; width: 22px; height: 22px; margin-right: 8px; border-radius: 50%; background: var(--glass); transition: rotate .2s; }
+.custom[open] summary::before { rotate: 45deg; }
+.tray label.rule { display: flex; align-items: flex-start; gap: 12px; margin: 0; padding: 10px 0; min-height: 44px; border-top: 1px solid rgba(255, 255, 255, .1); color: var(--on-felt); cursor: pointer; }
+.rule input[type=checkbox] { flex: none; width: 22px; min-height: 22px; height: 22px; margin: 2px 0 0; padding: 0; accent-color: var(--focus); box-shadow: none; }
+.rule span { display: grid; gap: 2px; min-width: 0; }
+.rule b { font-weight: 650; font-size: .92rem; }
+.rule small { color: var(--on-felt-muted); font-size: .8rem; font-weight: 500; line-height: 1.3; }
+.rule.select { align-items: center; justify-content: space-between; }
+.rule select { flex: none; min-height: 44px; padding: 6px 10px; font: inherit; border-radius: 10px; border: 2px solid transparent; background: var(--stock); color: #132220; }
+.house { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.house li { font-size: .78rem; font-weight: 650; padding: 4px 10px; border-radius: 999px; background: var(--paper-line); color: var(--paper-ink); }

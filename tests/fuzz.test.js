@@ -123,9 +123,12 @@ test('junk room requests never crash and never let a stranger touch a game', asy
     };
     const r = await handleRoom(db, body, quiet);
     assert.ok(OK.has(r.status), `${JSON.stringify(body)} -> ${r.status}`);
+    // A join needs no token: into a running game it only adds a spectator, never touching the players.
     if (body.token !== 'tp0') {
       const row = db.rows.get('ABCD');
-      if (row) assert.equal(row.version, state.version, `a stranger changed the game with ${JSON.stringify(body)}`);
+      if (row && body.action === 'join' && r.status === 200) {
+        assert.deepEqual(row.state.players, state.players, `a stranger changed the players with ${JSON.stringify(body)}`);
+      } else if (row) assert.equal(row.version, state.version, `a stranger changed the game with ${JSON.stringify(body)}`);
     }
   }
 });

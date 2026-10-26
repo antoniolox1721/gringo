@@ -53,6 +53,7 @@ export function handTotal(hand) {
 // ---------------------------------------------------------------------------
 
 const MAX_PLAYERS = 4;
+const MAX_SPECTATORS = 8;
 const HAND_SIZE = 4;
 
 function clone(state) {
@@ -129,11 +130,35 @@ function checkSetupDone(s) {
 // Room lifecycle and setup
 // ---------------------------------------------------------------------------
 
+// House rules, fixed when the room is created. Anything left out or malformed keeps its default.
+export const DEFAULT_RULES = {
+  gringoBlocksSwaps: true, // a player who called Gringo cannot be swapped with (Jack, King)
+  jackAnyPlayers: false, // the Jack swaps any two cards of two different players, not just yours
+  slapOthers: true, // a matching card may be slapped from another player's hand
+  slapGive: true, // ...and the slapper hands one of their own cards over in its place
+  multiSlap: false, // the pile can be slapped again after a slap (no "claimed" lock)
+  missPenalty: 1, // cards taken for a wrong slap
+};
+
+export function cleanRules(input) {
+  const rules = { ...DEFAULT_RULES };
+  if (!input || typeof input !== 'object') return rules;
+  for (const [key, def] of Object.entries(DEFAULT_RULES)) {
+    if (!Object.hasOwn(input, key)) continue;
+    const v = input[key];
+    if (typeof def === 'boolean' && typeof v === 'boolean') rules[key] = v;
+    if (key === 'missPenalty' && Number.isInteger(v) && v >= 1 && v <= 3) rules[key] = v;
+  }
+  return rules;
+}
+
+export const rulesOf = (state) => ({ ...DEFAULT_RULES, ...(state.rules || {}) });
+
 function newPlayer(id, name) {
   return { id, name, hand: [], seenSlots: [], viewable: [], gringo: false, connected: true };
 }
 
-export function createGame(hostId, hostName) {
+export function createGame(hostId, hostName, rules) {
   return {
     version: 0,
     phase: 'lobby',
@@ -153,6 +178,8 @@ export function createGame(hostId, hostName) {
     rps: null,
     rematch: [],
     starter: null,
+    spectators: [],
+    rules: cleanRules(rules),
   };
 }
 
@@ -162,6 +189,46 @@ export function addPlayer(state, id, name) {
   if (state.players.some((p) => p.id === id)) throw new Error('already joined');
   return produce(state, (s) => {
     s.players.push(newPlayer(id, name));
+  });
+}
+
+const spectatorsOf = (s) => s.spectators || [];
+const isSpectator = (s, id) => spectatorsOf(s).some((x) => x.id === id);
+
+export function addSpectator(state, id, name) {
+  if (state.players.some((p) => p.id === id) || isSpectator(state, id)) throw new Error('already joined');
+  if (spectatorsOf(state).length >= MAX_SPECTATORS) throw new Error('too many spectators');
+  return produce(state, (s) => {
+    s.spectators = [...spectatorsOf(s), { id, name, wantsIn: false }];
+  });
+}
+
+// Everyone's way into a room: a seat while the lobby has one, otherwise a place at the rail.
+export function joinRoom(state, id, name) {
+  return state.phase === 'lobby' && state.players.length < MAX_PLAYERS ? addPlayer(state, id, name) : addSpectator(state, id, name);
+}
+
+// A spectator takes a seat now (open lobby seat) or asks for one in the next game. `want: false`
+// withdraws the request.
+export function sit(state, id, want = true) {
+  if (!isSpectator(state, id)) throw new Error('only spectators can take a seat');
+  if (state.phase === 'lobby') {
+    if (!want) return state;
+    if (state.players.length >= MAX_PLAYERS) throw new Error('room full');
+    return produce(state, (s) => {
+      const sp = spectatorsOf(s).find((x) => x.id === id);
+      s.spectators = spectatorsOf(s).filter((x) => x.id !== id);
+      s.players.push(newPlayer(id, sp.name));
+    });
+  }
+  const flag = want !== false;
+  if (spectatorsOf(state).find((x) => x.id === id).wantsIn === flag) return state;
+  return produce(state, (s) => {
+    const me = spectatorsOf(s).find((x) => x.id === id);
+    me.wantsIn = flag;
+    // The queue runs in the order people asked: whoever asks last goes to the back.
+    if (flag) s.spectators = [...spectatorsOf(s).filter((x) => x !== me), me];
+    maybeRematch(s, secureRandom);
   });
 }
 
@@ -202,10 +269,14 @@ function deal(s, rng) {
 function maybeRematch(s, rng) {
   if (s.phase !== 'done') return;
   const live = connectedPlayers(s);
-  if (live.length < 2 || !live.every((p) => (s.rematch || []).includes(p.id))) return;
+  if (!live.every((p) => (s.rematch || []).includes(p.id))) return;
+  // Spectators who asked for a seat fill whatever the finished game left open, in the order they came.
+  const seatable = spectatorsOf(s).filter((x) => x.wantsIn).slice(0, MAX_PLAYERS - live.length);
+  if (live.length + seatable.length < 2) return;
   const winner = s.result && s.result.winners.find((id) => live.some((p) => p.id === id));
-  s.players = live;
-  if (!live.some((p) => p.id === s.hostId)) s.hostId = live[0].id;
+  s.players = [...live, ...seatable.map((x) => newPlayer(x.id, x.name))];
+  s.spectators = spectatorsOf(s).filter((x) => !seatable.includes(x));
+  if (!s.players.some((p) => p.id === s.hostId)) s.hostId = s.players[0].id;
   deal(s, rng);
   s.starter = winner || null;
 }
@@ -240,6 +311,7 @@ export function peekSetup(state, id, slots) {
 }
 
 export function removePlayer(state, id) {
+  if (isSpectator(state, id)) return produce(state, (s) => { s.spectators = spectatorsOf(s).filter((x) => x.id !== id); });
   playerOf(state, id);
   if (state.phase === 'lobby') {
     return produce(state, (s) => {
@@ -302,6 +374,7 @@ export function absentPlayers(state, seen, callerId, now, limits = PRESENCE) {
       .filter((p) => p.connected && p.id !== callerId && now - (seen[p.id] ?? now) > limits.staleMs)
       .map((p) => p.id),
   );
+  for (const x of spectatorsOf(state)) if (x.id !== callerId && now - (seen[x.id] ?? now) > limits.staleMs) gone.add(x.id);
   if (typeof state.lastMoveAt === 'number' && now - state.lastMoveAt > limits.idleMs) {
     for (const id of blockers(state)) gone.add(id);
   }
@@ -310,7 +383,15 @@ export function absentPlayers(state, seen, callerId, now, limits = PRESENCE) {
 
 // Ends the game for everyone because `ids` walked away: a lobby just loses them, a game in progress
 // is scored at once among the players still here. Never leaves a game that cannot finish.
-export function dropAbsent(state, ids) {
+export function dropAbsent(state, allIds) {
+  // Spectators leaving never touch the game itself.
+  const watchers = allIds.filter((id) => isSpectator(state, id));
+  if (watchers.length > 0) {
+    const rest = allIds.filter((id) => !watchers.includes(id));
+    const trimmed = produce(state, (s) => { s.spectators = spectatorsOf(s).filter((x) => !watchers.includes(x.id)); });
+    return dropAbsent(trimmed, rest);
+  }
+  const ids = allIds;
   const gone = ids.filter((id) => state.players.some((p) => p.id === id && p.connected));
   if (gone.length === 0) return state;
   // A finished game just loses them (their absence may complete the rematch vote).
@@ -348,6 +429,9 @@ export function viewFor(state, playerId) {
     phase: state.phase,
     hostId: state.hostId,
     you: playerId,
+    rules: rulesOf(state),
+    spectator: !me && isSpectator(state, playerId),
+    spectators: spectatorsOf(state).map((x) => ({ id: x.id, name: x.name, wantsIn: x.wantsIn })),
     players: state.players.map((p) => ({
       id: p.id,
       name: p.name,
@@ -591,11 +675,16 @@ export function usePower(state, id, args) {
     const t = playerOf(s, args.targetId);
     clearView(p);
     if (pend.type === 'J') {
-      if (t.id === id) throw new Error('choose another player');
-      if (t.gringo || p.gringo) throw new Error('cannot swap with a player who called gringo');
-      checkSlot(p, args.mine);
+      const rules = rulesOf(s);
+      // The first card is the Jack player's own, unless the house rule lets it be anyone's.
+      const other = args.firstId !== undefined && args.firstId !== id;
+      if (other && !rules.jackAnyPlayers) throw new Error('the first card must be yours');
+      const first = other ? playerOf(s, args.firstId) : p;
+      if (t.id === first.id) throw new Error('choose another player');
+      if (rules.gringoBlocksSwaps && (t.gringo || first.gringo)) throw new Error('cannot swap with a player who called gringo');
+      checkSlot(first, args.mine);
       checkSlot(t, args.theirs);
-      swapCards(s, p, args.mine, t, args.theirs);
+      swapCards(s, first, args.mine, t, args.theirs);
       finishPower(s);
     } else if (pend.type === 'Q') {
       checkSlot(t, args.slot);
@@ -639,7 +728,7 @@ export function confirmKing(state, id, swap) {
     const p = playerOf(s, id);
     if (swap === true) {
       const t = playerOf(s, pend.target.ownerId);
-      if (t.gringo || p.gringo) throw new Error('cannot swap with a player who called gringo');
+      if (rulesOf(s).gringoBlocksSwaps && (t.gringo || p.gringo)) throw new Error('cannot swap with a player who called gringo');
       checkSlot(p, pend.own.slot);
       checkSlot(t, pend.target.slot);
       swapCards(s, p, pend.own.slot, t, pend.target.slot);
@@ -666,9 +755,11 @@ export function slap(state, id, args, rng = secureRandom) {
   if (!Number.isInteger(args.slot) || args.slot < 0 || args.slot >= owner.hand.length) throw new Error('invalid slot');
   const card = owner.hand[args.slot];
   const top = state.discard.length ? state.discard[state.discard.length - 1] : null;
-  const ok = !!card && !!top && !state.discardClaimed && card.rank === top.rank;
+  const rules = rulesOf(state);
   const other = owner.id !== id;
-  const mustGive = ok && other && me.hand.some((x) => x !== null);
+  if (other && !rules.slapOthers) throw new Error('only your own cards can be slapped in this room');
+  const ok = !!card && !!top && (rules.multiSlap || !state.discardClaimed) && card.rank === top.rank;
+  const mustGive = ok && other && rules.slapGive && me.hand.some((x) => x !== null);
   if (mustGive) {
     const g = args.giveSlot;
     if (!Number.isInteger(g) || g < 0 || g >= me.hand.length || me.hand[g] === null) {
@@ -693,14 +784,15 @@ export function slap(state, id, args, rng = secureRandom) {
       trimExtraSlots(o);
       trimExtraSlots(p);
       discardCard(s, taken, id);
-      s.discardClaimed = true;
+      s.discardClaimed = !rules.multiSlap;
       checkZeroDraft(s, p.id);
       if (other) checkZeroDraft(s, o.id);
       // A power card slapped onto the pile after the last turn has nobody left to use it.
       if (s.phase === 'ending') s.pending = [];
     } else {
-      const penalty = takeCard(s, rng);
-      if (penalty) {
+      for (let i = 0; i < rules.missPenalty; i++) {
+        const penalty = takeCard(s, rng);
+        if (!penalty) break;
         p.hand.push(penalty);
         touch(p, p.hand.length - 1);
       }

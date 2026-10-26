@@ -81,7 +81,7 @@ function roomEndpoint(body) {
       const playerId = randomUUID();
       const token = randomUUID();
       for (const [c, r] of rooms) if (engine.lonelyRoom(r.seen, r.createdAt, Date.now(), LIMITS.lonelyMs)) rooms.delete(c);
-      rooms.set(code, { state: engine.createGame(playerId, name), tokens: new Map([[token, playerId]]), seen: {}, createdAt: Date.now() });
+      rooms.set(code, { state: engine.createGame(playerId, name, body.rules), tokens: new Map([[token, playerId]]), seen: {}, createdAt: Date.now() });
       return { code, playerId, token };
     }
     case 'join': {
@@ -89,7 +89,7 @@ function roomEndpoint(body) {
       const name = cleanName(body.name);
       const playerId = randomUUID();
       const token = randomUUID();
-      room.state = wrap(() => engine.addPlayer(room.state, playerId, name));
+      room.state = wrap(() => engine.joinRoom(room.state, playerId, name));
       room.tokens.set(token, playerId);
       room.seen[playerId] = Date.now();
       return { playerId, token };
@@ -104,10 +104,11 @@ function roomEndpoint(body) {
       const room = roomOf(body.code);
       const id = auth(room, body.token);
       if (id !== room.state.hostId) throw new HttpError(400, 'only the host can kick');
-      if (room.state.phase !== 'lobby') throw new HttpError(403, 'players can only be removed in the lobby');
+      const watcher = (room.state.spectators || []).some((x) => x.id === body.targetId);
+      if (room.state.phase !== 'lobby' && !watcher) throw new HttpError(403, 'players can only be removed in the lobby');
       if (body.targetId === id) throw new HttpError(400, 'cannot kick yourself');
       room.state = wrap(() => engine.removePlayer(room.state, body.targetId));
-      for (const [t, pid] of room.tokens) if (pid === body.targetId && room.state.phase === 'lobby') room.tokens.delete(t);
+      for (const [t, pid] of room.tokens) if (pid === body.targetId && (room.state.phase === 'lobby' || watcher)) room.tokens.delete(t);
       return { ok: true };
     }
     case 'view': {
@@ -116,7 +117,7 @@ function roomEndpoint(body) {
       const t = Date.now();
       room.seen[id] = body.bye === true ? t - (STALE_MS - BYE_GRACE_MS) : t;
       const lonely = engine.lonelyRoom(room.seen, room.createdAt, t, LIMITS.lonelyMs);
-      for (const p of room.state.players) if (room.seen[p.id] === undefined) room.seen[p.id] = t;
+      for (const p of [...room.state.players, ...(room.state.spectators || [])]) if (room.seen[p.id] === undefined) room.seen[p.id] = t;
       if (body.bye !== true && lonely) {
         rooms.delete(String(body.code).toUpperCase());
         throw new HttpError(404, 'room not found');
@@ -125,6 +126,12 @@ function roomEndpoint(body) {
       const absent = engine.absentPlayers(room.state, room.seen, id, t, LIMITS);
       if (body.bye !== true && absent.length) room.state = wrap(() => engine.stamp(room.state, engine.dropAbsent(room.state, absent), t));
       return { view: engine.viewFor(room.state, id) };
+    }
+    case 'sit': {
+      const room = roomOf(body.code);
+      const id = auth(room, body.token);
+      room.state = wrap(() => engine.stamp(room.state, engine.sit(room.state, id, body.want !== false), Date.now()));
+      return { ok: true };
     }
     case 'leave': {
       const room = roomOf(body.code);
