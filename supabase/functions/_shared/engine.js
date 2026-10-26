@@ -411,15 +411,38 @@ export function dropAbsent(state, allIds) {
     });
   }
   if (state.phase === 'lobby') return gone.reduce((st, id) => removePlayer(st, id), state);
-  return produce(state, (s) => {
-    for (const id of gone) playerOf(s, id).connected = false;
-    s.abandonedBy = gone;
+  return produce(state, (s) => forfeit(s, gone));
+}
+
+// Players who walk away mid-game forfeit: their cards go back into the deck, they can no longer win,
+// and the others play on. With fewer than two left the game is over and the last one standing wins.
+function forfeit(s, gone) {
+  const returned = [];
+  for (const id of gone) {
+    const p = playerOf(s, id);
+    p.connected = false;
+    p.forfeited = true;
+    returned.push(...p.hand.filter((c) => c !== null));
+    p.hand = [];
+    p.moves = [];
+    clearView(p);
+  }
+  // Reveals and half-finished powers that pointed at their cards are void now.
+  for (const q of s.players) q.viewable = q.viewable.filter((v) => !gone.includes(v.ownerId));
+  s.pending = s.pending.filter((x) => !(x.target && gone.includes(x.target.ownerId)));
+  s.deck = shuffle([...s.deck, ...returned]);
+  s.abandonedBy = [...(s.abandonedBy || []), ...gone];
+  if (connectedPlayers(s).length < 2) {
     finishDraft(s);
+    s.result.forfeit = true;
     if (s.phase === 'rps') {
       s.phase = 'done';
       s.rps = null;
     }
-  });
+    return;
+  }
+  for (const id of gone) handleDisconnect(s, id);
+  maybeAdvance(s);
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +468,7 @@ export function viewFor(state, playerId) {
       id: p.id,
       name: p.name,
       connected: p.connected,
+      forfeited: !!p.forfeited,
       gringo: p.gringo,
       ready: p.seenSlots.length > 0,
       hand: p.hand.map((card, slot) => {

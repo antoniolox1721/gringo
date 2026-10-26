@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as engine from '../supabase/functions/_shared/engine.js';
-import { RATE } from '../supabase/functions/_shared/ratelimit.js';
+import { RATE, RATE_UNKNOWN, UNKNOWN_IP, memoryCounters } from '../supabase/functions/_shared/ratelimit.js';
 import { handleAct, handleRoom } from '../supabase/functions/_shared/handlers.js';
 import { fakeDb } from './helpers.js';
 
@@ -209,7 +209,7 @@ test('real attempt: a burst of simultaneous guesses cannot all slip past the lim
 
 test('requests that succeed give their reservation back, so normal play never nears the miss limit', async () => {
   const db = fakeDb();
-  const { code, who } = await newRoom(db, 2, { ip: '10.9.9.9' });
+  const { code, who } = await newRoom(db, 2, { ip: '10.9.9.9', now: () => 7_999_000 });
   const ip = '10.9.9.9';
   const results = [];
   for (let i = 0; i < 200; i++) results.push((await room(db, { action: 'view', code, token: who[i % 2].token }, { ip, now: () => 8_000_000 })).status);
@@ -255,7 +255,7 @@ test('real attempt: room creation and join floods are capped and never touch the
 
 test('real attempt: hammering one address is cut off, but a polling table of four is nowhere near the limit', async () => {
   const db = fakeDb();
-  const { code, who } = await newRoom(db, 4, { ip: '10.2.2.2' });
+  const { code, who } = await newRoom(db, 4, { ip: '10.2.2.2', now: () => 8_999_000 });
   const t0 = 9_000_000;
   const ip = '10.2.2.2';
   // Four players polling every 2 seconds for a minute.
@@ -280,9 +280,32 @@ test('the limiter never gets in the way when it cannot do its job', async () => 
   const made = await room(db, { action: 'create', name: 'x' }, { ip: '1.2.3.4' });
   assert.equal(made.status, 200);
   assert.equal((await room(db, { action: 'join', code: 'ZZZZ', name: 'x' }, { ip: '1.2.3.4' })).status, 404);
-  // No address (tests, local tools): no limits at all.
+  // No address passed in (unit tests, internal callers): no limits at all.
   const bare = fakeDb();
   for (let i = 0; i < RATE.create + 3; i++) assert.equal((await room(bare, { action: 'create', name: 'x' })).status, 200);
+});
+
+test('requests with no trusted address share one looser bucket instead of going unlimited', async () => {
+  const db = fakeDb();
+  const statuses = [];
+  for (let i = 0; i < RATE_UNKNOWN.create + 5; i++) statuses.push((await room(db, { action: 'create', name: 'x' }, { ip: UNKNOWN_IP, now: () => 3_000_000 })).status);
+  assert.equal(statuses.filter((s) => s === 200).length, RATE_UNKNOWN.create, 'ten times the normal allowance');
+  assert.ok(RATE_UNKNOWN.create > RATE.create);
+  assert.ok(statuses.slice(RATE_UNKNOWN.create).every((s) => s === 429));
+});
+
+test('a release only counts inside the window the reservation was made in', () => {
+  const c = memoryCounters();
+  const W = 60_000;
+  c.gate('1.1.1.1', '', 1000, W); // reserved in window A
+  c.gate('1.1.1.1', '', 2000, W);
+  c.release('1.1.1.1', 2000, W); // same window: counts back
+  assert.equal(c.gate('1.1.1.1', '', 3000, W).miss, 2);
+  // The window rolls over, someone reserves in the new one, then an old request releases.
+  const first = c.gate('1.1.1.1', '', 70_000, W);
+  assert.equal(first.miss, 1);
+  c.release('1.1.1.1', 59_000, W); // reservation belonged to the old window: ignored
+  assert.equal(c.gate('1.1.1.1', '', 71_000, W).miss, 2);
 });
 
 // ---- the lasting game log -----------------------------------------------------------
@@ -298,9 +321,14 @@ test('every game start is logged once, rematches included, with only a time and 
   const s = db.rows.get(code).state;
   // End it by a forfeit, then everyone left votes for another game.
   await room(db, { action: 'leave', code, token: who[2].token });
+  assert.equal(db.rows.get(code).state.phase, 'setup', 'two are left, so the game goes on');
+  await room(db, { action: 'leave', code, token: who[1].token });
   assert.equal(db.rows.get(code).state.phase, 'done');
   assert.equal(db.starts.length, 1, 'a game ending is not a start');
-  for (const p of who.slice(0, 2)) await act(db, { code, token: p.token, action: 'rematch' });
+  // Only p0 is left; a game needs two, so a spectator who asks for a seat makes it.
+  const watcher = await room(db, { action: 'join', code, name: 'w' });
+  await room(db, { action: 'sit', code, token: watcher.body.token });
+  await act(db, { code, token: who[0].token, action: 'rematch' });
   assert.equal(db.rows.get(code).state.phase, 'setup');
   assert.equal(db.starts.length, 2);
   assert.equal(db.starts[1].players, 2);

@@ -1,5 +1,5 @@
 import * as engine from './engine.js';
-import { RATE, checkRate, settleRate } from './ratelimit.js';
+import { RATE, checkRate, limitsFor, settleRate } from './ratelimit.js';
 import { HttpError, applyWithRetry, broadcast, hashToken, loadGame, playerIdForToken } from './store.js';
 
 const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
@@ -195,7 +195,7 @@ async function actInner(db, body, deps) {
 // Per-address limits wrap both endpoints; deps.ip is set by the Edge Function entry points.
 async function limited(db, deps, kind, run) {
   const now = (deps.now || Date.now)();
-  const limits = deps.rate || RATE;
+  const limits = deps.rate || limitsFor(deps.ip);
   const blocked = await checkRate(db, deps.ip, kind, now, limits);
   if (blocked) return blocked;
   const res = await run();

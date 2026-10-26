@@ -46,34 +46,105 @@ function phases() {
   };
 }
 
-test('dropAbsent ends every phase of a game at once, however the others are placed', () => {
+const cardTotal = (s) => s.deck.length + s.discard.length + (s.drawn ? 1 : 0) + s.players.reduce((n, p) => n + p.hand.filter(Boolean).length, 0);
+
+test('a leaver forfeits in every phase: their cards go back in the deck and the others play on', () => {
   for (const [name, state] of Object.entries(phases())) {
-    for (const gone of [['p0'], ['p1'], ['p2'], ['p0', 'p1'], ['p1', 'p2']]) {
+    for (const gone of [['p0'], ['p1'], ['p2']]) {
       const next = engine.dropAbsent(state, gone);
-      assert.equal(next.phase, 'done', `${name}, ${gone} left`);
-      assert.deepEqual(next.abandonedBy, gone, `${name}, ${gone} left`);
-      assert.equal(next.rps, null);
-      assert.ok(next.result, `${name} has a result`);
-      assert.ok(next.version > state.version);
-      const winners = next.result.winners;
-      assert.ok(winners.length > 0 && winners.every((w) => !gone.includes(w)), `${name}: a leaver cannot win`);
+      const tag = `${name}, ${gone} left`;
+      assert.deepEqual(next.abandonedBy, gone, tag);
+      assert.ok(next.version > state.version, tag);
+      assert.equal(cardTotal(next), cardTotal(state), `${tag}: no card is lost or made`);
+      const out = next.players.find((p) => p.id === gone[0]);
+      assert.deepEqual(out.hand, [], `${tag}: their hand is empty`);
+      assert.equal(out.connected, false);
+      assert.equal(out.forfeited, true);
+      assert.ok(next.players.every((p) => p.viewable.every((v) => v.ownerId !== gone[0])), `${tag}: nobody still sees their cards`);
+      assert.ok(next.deck.length >= state.deck.length, tag);
+      if (next.phase !== 'done') {
+        // The game goes on: nobody is waited on who has left, and the turn is someone present.
+        assert.ok(!engine.blockers(next).includes(gone[0]), tag);
+        if (next.phase === 'turns' || next.phase === 'final') assert.equal(next.players[next.turn].connected, true, `${tag}: the turn moved on`);
+      } else {
+        assert.ok(!next.result.winners.includes(gone[0]), `${tag}: a leaver cannot win`);
+      }
     }
   }
 });
 
-test('a leaver forfeits even with the lowest score', () => {
+test('with fewer than two players left the game ends at once, and the last one wins', () => {
+  for (const [name, state] of Object.entries(phases())) {
+    for (const gone of [['p0', 'p1'], ['p1', 'p2'], ['p0', 'p2']]) {
+      const next = engine.dropAbsent(state, gone);
+      assert.equal(next.phase, 'done', `${name}, ${gone} left`);
+      assert.deepEqual(next.abandonedBy, gone);
+      assert.equal(next.rps, null);
+      assert.equal(next.result.forfeit, true);
+      assert.deepEqual(next.result.winners, ['p0', 'p1', 'p2'].filter((id) => !gone.includes(id)), `${name}: the one still here wins`);
+      // (a card someone had just drawn is simply set aside when the game ends, as it always was)
+      assert.equal(cardTotal(next), cardTotal(state) - (state.drawn ? 1 : 0));
+    }
+  }
+  // Two players: one leaving ends it.
+  const two = engine.dropAbsent(stacked(2), ['p0']);
+  assert.equal(two.phase, 'done');
+  assert.deepEqual(two.result.winners, ['p1']);
+});
+
+test('a leaver\'s cards are shuffled back into the deck, so they can be drawn again', () => {
+  const s = stacked(3);
+  const mine = s.players[1].hand.map((x) => x.uid).sort();
+  const next = engine.dropAbsent(s, ['p1']);
+  const deck = next.deck.map((x) => x.uid);
+  for (const uid of mine) assert.ok(deck.includes(uid), `card ${uid} is back in the deck`);
+  assert.equal(next.deck.length, s.deck.length + 4);
+  assert.equal(engine.viewFor(next, 'p0').players.find((p) => p.id === 'p1').forfeited, true);
+});
+
+test('a half-finished King against a leaver is cancelled, and powers by the leaver vanish', () => {
+  const king = engine.usePower({ ...stacked(3), pending: [{ type: 'K', by: 'p0' }], acted: true }, 'p0', { type: 'K', targetId: 'p1', slot: 0 }).state;
+  assert.equal(king.pending[0].target.ownerId, 'p1');
+  const next = engine.dropAbsent(king, ['p1']);
+  assert.deepEqual(next.pending, []);
+  assert.deepEqual(next.players[0].viewable, []);
+  assert.equal(next.players[next.turn].connected, true);
+  assert.notEqual(next.players[next.turn].id, 'p0', 'p0 had finished their turn');
+  const own = engine.dropAbsent({ ...stacked(3), pending: [{ type: 'Q', by: 'p1' }], acted: true, turn: 1 }, ['p1']);
+  assert.deepEqual(own.pending, []);
+  assert.equal(own.players[own.turn].id, 'p2');
+});
+
+test('the turn player leaving hands the turn on, and a drawn card goes to the pile', () => {
+  const drawn = engine.draw(stacked(3), 'p0', rng).state;
+  const next = engine.dropAbsent(drawn, ['p0']);
+  assert.equal(next.drawn, null);
+  assert.equal(next.players[next.turn].id, 'p1');
+  assert.equal(next.discard.at(-1).uid, drawn.drawn.uid);
+  assert.equal(cardTotal(next), cardTotal(drawn));
+});
+
+test('a forfeited player cannot be slapped, swapped with or act', () => {
+  const next = engine.dropAbsent(stacked(3), ['p1']);
+  assert.throws(() => engine.slap({ ...next, discard: [c('5', 'D')] }, 'p0', { ownerId: 'p1', slot: 0 }), /invalid slot/);
+  assert.throws(() => engine.usePower({ ...next, pending: [{ type: 'J', by: 'p0' }] }, 'p0', { type: 'J', targetId: 'p1', mine: 0, theirs: 0 }), /invalid slot/);
+  assert.throws(() => engine.draw({ ...next, turn: 1 }, 'p1'), /not in the game|not your turn/);
+});
+
+test('the game can still be finished normally after a forfeit, and the leaver cannot win', () => {
   const g = stackedGame({
     players: ['p0', 'p1', 'p2'],
     hands: [[c('9'), c('9')], [c('A'), c('2')], [c('5'), c('6')]],
   });
-  const best = engine.dropAbsent(g, ['p1']);
-  assert.equal(best.result.totals.p1, 3, 'p1 had the lowest total');
-  assert.deepEqual(best.result.winners, ['p2']);
+  const next = engine.dropAbsent(g, ['p1']);
+  assert.equal(next.phase, 'turns', 'p1 left but two are still playing');
+  const end = engine.finishGame(next);
+  assert.deepEqual(end.result.winners, ['p2'], 'p1 had the lowest hand before leaving, and still cannot win');
   const tied = stackedGame({
     players: ['p0', 'p1', 'p2'],
     hands: [[c('5'), c('6')], [c('A')], [c('4'), c('7')]],
   });
-  assert.deepEqual(engine.dropAbsent(tied, ['p1']).result.winners.sort(), ['p0', 'p2']);
+  assert.deepEqual(engine.finishGame(engine.dropAbsent(tied, ['p1'])).result.winners.sort(), ['p0', 'p2']);
 });
 
 test('the last player standing wins when everyone else leaves', () => {
@@ -91,7 +162,7 @@ test('a lobby only loses the absent player; the host passes on', () => {
 });
 
 test('dropAbsent leaves a finished game finished and ignores players already gone', () => {
-  const done = engine.dropAbsent(stacked(), ['p0']);
+  const done = engine.dropAbsent(stacked(2), ['p0']);
   const later = engine.dropAbsent(done, ['p1']);
   assert.equal(later.phase, 'done');
   assert.deepEqual(later.abandonedBy, ['p0']);
@@ -127,7 +198,7 @@ test('a poll is a heartbeat and does not bump the game version', async () => {
   assert.equal(db.rows.get('ABCD').version, 0);
 });
 
-test('a player who stops polling ends the game for the others after the stale window', async () => {
+test('a player who stops polling forfeits after the stale window, and the others play on', async () => {
   const db = await room(stacked(3));
   const now = clock();
   for (const id of ['p0', 'p1', 'p2']) await poll(db, id, now);
@@ -138,10 +209,10 @@ test('a player who stops polling ends the game for the others after the stale wi
   now.advance(2000);
   await poll(db, 'p0', now);
   const r = await poll(db, 'p1', now);
-  assert.equal(r.body.view.phase, 'done');
+  assert.equal(r.body.view.phase, 'turns', 'two players are still here');
   assert.deepEqual(r.body.view.abandonedBy, ['p2']);
-  assert.ok(!r.body.view.result.winners.includes('p2'));
-  assert.equal(db.rows.get('ABCD').state.phase, 'done');
+  assert.deepEqual(r.body.view.players.find((p) => p.id === 'p2').hand, []);
+  assert.equal(db.rows.get('ABCD').state.phase, 'turns');
 });
 
 test('a late-joining row without heartbeats is not swept on the first poll', async () => {
@@ -188,13 +259,20 @@ test('the lobby drops a ghost player instead of ending anything', async () => {
   assert.deepEqual(r.body.view.players.map((p) => p.id), ['p0']);
 });
 
-test('leave ends a running game at once and removes a lobby player', async () => {
+test('leave forfeits from a running game (it ends only when fewer than two remain) and removes a lobby player', async () => {
   const db = await room(stacked(3));
   const r = await handleRoom(db, { action: 'leave', code: 'ABCD', token: 'tp1' }, quiet);
   assert.equal(r.status, 200);
   const { state } = db.rows.get('ABCD');
-  assert.equal(state.phase, 'done');
+  assert.equal(state.phase, 'turns');
   assert.deepEqual(state.abandonedBy, ['p1']);
+  await handleRoom(db, { action: 'leave', code: 'ABCD', token: 'tp2' }, quiet);
+  assert.equal(db.rows.get('ABCD').state.phase, 'done', 'one player left: the game is over');
+  assert.deepEqual(db.rows.get('ABCD').state.result.winners, ['p0']);
+
+  const two = await room(stacked(2));
+  await handleRoom(two, { action: 'leave', code: 'ABCD', token: 'tp1' }, quiet);
+  assert.equal(two.rows.get('ABCD').state.phase, 'done');
 
   const db2 = await room(lobby(3));
   await handleRoom(db2, { action: 'leave', code: 'ABCD', token: 'tp0' }, quiet);
@@ -232,7 +310,7 @@ test('a player who never polled still goes stale, and concurrent polls keep each
   await Promise.all([poll(db, 'p0', now), poll(db, 'p1', now)]);
   now.advance(6000);
   const r = await poll(db, 'p0', now);
-  assert.equal(r.body.view.phase, 'done');
+  assert.equal(r.body.view.phase, 'turns', 'the other two play on');
   assert.deepEqual(r.body.view.abandonedBy, ['p2'], 'only the player who never polled is gone');
 });
 
@@ -260,7 +338,8 @@ test('blockers names exactly who the game is waiting for', () => {
   const rps = phases().rps;
   assert.equal(rps.phase, 'rps');
   assert.deepEqual(engine.blockers(rps).sort(), rps.rps.players.slice().sort());
-  assert.deepEqual(engine.blockers(engine.dropAbsent(stacked(), ['p0'])), []);
+  assert.deepEqual(engine.blockers(engine.dropAbsent(stacked(), ['p0'])), ['p1'], 'the turn moved on from the leaver');
+  assert.deepEqual(engine.blockers(engine.dropAbsent(stacked(2), ['p0'])), [], 'a finished game waits for nobody');
   assert.deepEqual(engine.blockers(lobby()), []);
 });
 
@@ -276,9 +355,9 @@ test('a player who keeps the tab open but never moves forfeits after the idle wi
   assert.equal((await poll(db, 'p1', now)).body.view.phase, 'turns', 'still within the window');
   now.advance(15000);
   const r = await poll(db, 'p1', now);
-  assert.equal(r.body.view.phase, 'done');
+  assert.equal(r.body.view.phase, 'turns', 'p1 and p2 play on');
   assert.deepEqual(r.body.view.abandonedBy, ['p0']);
-  assert.ok(!r.body.view.result.winners.includes('p0'));
+  assert.equal(r.body.view.turnId, 'p1', 'the turn moved on from the idle player');
 });
 
 test('slaps and penalties do not reset the idle clock; real progress does', async () => {

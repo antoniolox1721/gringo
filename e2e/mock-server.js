@@ -224,7 +224,8 @@ function stackEndpoint(body) {
   if (body.discard) s.discard = body.discard.map(card);
   if (body.deck) s.deck = body.deck.map(card);
   s.version += 1;
-  room.state = s;
+  // finish: end the game normally (scores the hands), so the reveal can be looked at with any hands.
+  room.state = body.finish ? engine.finishGame(s) : s;
   return { ok: true };
 }
 

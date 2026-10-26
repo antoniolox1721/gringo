@@ -9,6 +9,18 @@ export const RATE = {
   misses: 20, // requests for a room or token that does not exist, which is what guessing codes looks like
 };
 
+// Requests with no trusted client address share one bucket with limits ten times higher: still a cap
+// on floods, but loose enough that a missing header cannot take the game down for everyone.
+export const UNKNOWN_IP = 'unknown';
+export const RATE_UNKNOWN = {
+  ...RATE,
+  all: RATE.all * 10,
+  create: RATE.create * 10,
+  join: RATE.join * 10,
+  misses: RATE.misses * 10,
+};
+export const limitsFor = (ip, base = RATE) => (ip === UNKNOWN_IP ? RATE_UNKNOWN : base);
+
 // Every request reserves one "miss" before it runs and gives it back if it succeeded, so requests
 // that arrive at the same moment cannot all pass a check that only counted afterwards.
 
@@ -33,8 +45,9 @@ export function memoryCounters() {
       return { all, kind: k, miss };
     },
     release(ip, now, windowMs) {
+      // Only inside the window the reservation was made in.
       const h = hits.get(`miss:${ip}`);
-      if (h && h.start + windowMs > now) h.n = Math.max(0, h.n - 1);
+      if (h && h.start <= now && h.start + windowMs > now) h.n = Math.max(0, h.n - 1);
     },
   };
 }

@@ -408,6 +408,7 @@ function announce(p, v) {
     for (const np of v.players) {
       const op = p.players.find((x) => x.id === np.id);
       if (!op) continue;
+      if (np.forfeited && !op.forfeited && !isOver()) callout(`${whoName(np.id)} forfeited`, 'Their cards went back into the deck.');
       if (np.gringo && !op.gringo) callout(`${whoName(np.id)} called Gringo`, 'Final round. Everyone else plays one more turn.');
       if (np.hand.length > op.hand.length && playing()) {
         if (np.id === v.you) buzz([30, 40, 30]);
@@ -620,7 +621,7 @@ function barHtml(brand = true, plaque = '') {
   const on = soundOn();
   const me = session && view && view.players.find((p) => p.id === view.you);
   const exit = me && me.connected && ['setup', 'turns', 'final', 'ending', 'rps'].includes(view.phase)
-    ? `<button class="leave${local.leaveArm ? ' armed' : ''}" data-act="exit">${local.leaveArm ? 'End game?' : 'Leave'}</button>`
+    ? `<button class="leave${local.leaveArm ? ' armed' : ''}" data-act="exit">${local.leaveArm ? (view.players.filter((p) => p.connected).length > 2 ? 'Forfeit?' : 'End game?') : 'Leave'}</button>`
     : session && view && view.spectator && view.phase !== 'lobby' ? '<button class="leave" data-act="leave">Leave</button>' : '';
   return `<header class="bar" data-key="bar">${brand ? '<span class="brand">Gringo</span>' : ''}${room}${net}${exit}
     <button class="icon sound${on ? ' on' : ''}" data-act="sound" aria-pressed="${on}" aria-label="Sound effects" title="Sound ${on ? 'on' : 'off'}">${SOUND_ICON}</button></header>`;
@@ -861,15 +862,15 @@ function seatHtml(p, pos, mode) {
   const n = live(p);
   const winners = (view.result && view.result.winners) || [];
   const won = !!reveal && winners.includes(p.id) && view.phase === 'done';
-  const forfeit = !!reveal && (view.abandonedBy || []).includes(p.id);
+  const forfeit = !!p.forfeited;
   const badges = [
-    view.phase === 'setup' ? (p.ready ? '<span class="badge ok">ready</span>' : '<span class="badge">peeking</span>') : '',
+    view.phase === 'setup' && !forfeit ? (p.ready ? '<span class="badge ok">ready</span>' : '<span class="badge">peeking</span>') : '',
     p.gringo ? '<span class="badge call">gringo</span>' : '',
     won && reveal.settled ? '<span class="badge win">winner</span>' : '',
-    forfeit ? '<span class="badge off">forfeit</span>' : p.connected ? '' : '<span class="badge off">offline</span>',
+    forfeit ? '<span class="badge off">forfeited</span>' : p.connected ? '' : '<span class="badge off">offline</span>',
   ].join('');
   const totals = view.result && view.result.totals;
-  const total = reveal && totals && totals[p.id] !== undefined
+  const total = reveal && !forfeit && totals && totals[p.id] !== undefined
     ? `<span class="total" style="--d:${reveal.totalAt(p.id)}ms">Total ${totals[p.id]}</span>` : '';
   const holding = inPlay() && view.hasDrawn && view.turnId === p.id && !isMe;
   const held = holding
@@ -879,7 +880,7 @@ function seatHtml(p, pos, mode) {
   const lines = handLines(p.hand.length, pos);
   const per = Math.max(1, Math.ceil(p.hand.length / lines));
   const ls = (1 / (1 + 0.28 * (lines - 1))).toFixed(3);
-  return `<section class="seat pos-${pos}${isMe ? ' me' : ''}${active ? ' active' : ''}${p.connected || reveal ? '' : ' offline'}${won && reveal.settled ? ' winner' : ''}" data-key="seat:${esc(p.id)}" data-player="${esc(p.id)}" data-rot="${rot}" style="--seat: var(--seat-${seatIndex(p.id)}); --n: ${per}; --ls: ${ls}">
+  return `<section class="seat pos-${pos}${isMe ? ' me' : ''}${active ? ' active' : ''}${p.connected || (reveal && !forfeit) ? '' : ' offline'}${won && reveal.settled ? ' winner' : ''}" data-key="seat:${esc(p.id)}" data-player="${esc(p.id)}" data-rot="${rot}" style="--seat: var(--seat-${seatIndex(p.id)}); --n: ${per}; --ls: ${ls}">
     <i class="ring" aria-hidden="true"></i>
     <div class="chip"><span class="dot" aria-hidden="true"></span><b class="name">${esc(p.name)}</b>${isMe ? '<span class="you">you</span>' : ''}
       <span class="count" aria-label="${n} cards">${n}</span>${badges}${total}</div>
@@ -1027,7 +1028,8 @@ function tieBroken() {
 function leftNote() {
   const gone = (view.abandonedBy || []).map(nameOf).map(esc);
   if (gone.length === 0) return '';
-  return `${gone.join(' & ')} left and forfeited, so the game ended.`;
+  if (view.result && view.result.forfeit) return `${gone.join(' & ')} left and forfeited, so the game ended.`;
+  return `${gone.join(' & ')} forfeited earlier and could not win.`;
 }
 
 function againHtml() {

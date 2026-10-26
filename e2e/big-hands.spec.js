@@ -51,9 +51,8 @@ for (const players of [2, 3, 4]) {
     expect(play.outside, 'cards off screen while playing').toBe(0);
     expect(play.scrollW).toBeLessThanOrEqual(play.vw);
 
-    // End the game: everyone's cards turn face up in place.
-    await pages[players - 1].locator('[data-act=exit]').click();
-    await pages[players - 1].locator('[data-act=exit]').click();
+    // End the game normally: everyone's cards turn face up in place.
+    expect((await request.post('/__test/stack', { data: { code, finish: true } })).ok()).toBeTruthy();
     await expect(pages[0].locator('#result')).toBeVisible({ timeout: 10_000 });
     await expect(pages[0].locator('.total').first()).toBeVisible();
     await pages[0].waitForTimeout(9000);
