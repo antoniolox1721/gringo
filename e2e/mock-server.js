@@ -6,7 +6,7 @@ import { randomUUID, randomInt } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as engine from '../supabase/functions/_shared/engine.js';
-import { RATE, checkRate, memoryCounters, noteMiss } from '../supabase/functions/_shared/ratelimit.js';
+import { RATE, checkRate, memoryCounters, settleRate } from '../supabase/functions/_shared/ratelimit.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.resolve(here, '..', 'web');
@@ -33,7 +33,7 @@ const LIMITS = { staleMs: STALE_MS, byeGraceMs: BYE_GRACE_MS, idleMs: Number(pro
 // The same per-address limits as the Edge Functions (MOCK_RATE_* raise them for tests that poll a lot).
 const LIMIT = { ...RATE, all: Number(process.env.MOCK_RATE_ALL) || RATE.all, create: Number(process.env.MOCK_RATE_CREATE) || RATE.create, join: Number(process.env.MOCK_RATE_JOIN) || RATE.join, misses: Number(process.env.MOCK_RATE_MISSES) || RATE.misses };
 const counters = memoryCounters();
-const limiterDb = { gate: (...a) => counters.gate(...a), miss: (...a) => counters.miss(...a) };
+const limiterDb = { gate: (...a) => counters.gate(...a), release: (...a) => counters.release(...a) };
 const starts = []; // games started (time, players), like the play_log table
 
 // Records a game start: lobby or finished game -> setup.
@@ -264,8 +264,9 @@ const server = http.createServer(async (req, res) => {
       if (blocked) { send(res, blocked.status, blocked.body); return; }
       try {
         send(res, 200, isRoom ? roomEndpoint(body) : actEndpoint(body));
+        await settleRate(limiterDb, ip, now, 200, LIMIT);
       } catch (e) {
-        await noteMiss(limiterDb, ip, now, e.status === 403 || e.message === 'unknown room' ? 403 : e.status || 500, LIMIT);
+        await settleRate(limiterDb, ip, now, e.status === 403 || e.message === 'unknown room' ? 403 : e.status || 500, LIMIT);
         throw e;
       }
       return;

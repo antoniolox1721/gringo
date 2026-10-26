@@ -1,5 +1,5 @@
 import * as engine from './engine.js';
-import { RATE, checkRate, noteMiss } from './ratelimit.js';
+import { RATE, checkRate, settleRate } from './ratelimit.js';
 import { HttpError, applyWithRetry, broadcast, hashToken, loadGame, playerIdForToken } from './store.js';
 
 const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
@@ -199,7 +199,7 @@ async function limited(db, deps, kind, run) {
   const blocked = await checkRate(db, deps.ip, kind, now, limits);
   if (blocked) return blocked;
   const res = await run();
-  await noteMiss(db, deps.ip, now, res.status, limits);
+  await settleRate(db, deps.ip, now, res.status, limits);
   return res;
 }
 

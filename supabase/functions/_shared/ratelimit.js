@@ -9,6 +9,9 @@ export const RATE = {
   misses: 20, // requests for a room or token that does not exist, which is what guessing codes looks like
 };
 
+// Every request reserves one "miss" before it runs and gives it back if it succeeded, so requests
+// that arrive at the same moment cannot all pass a check that only counted afterwards.
+
 // Fixed windows, same arithmetic as the SQL functions.
 export function memoryCounters() {
   const hits = new Map();
@@ -26,11 +29,12 @@ export function memoryCounters() {
     gate(ip, kind, now, windowMs) {
       const all = bump(`all:${ip}`, now, windowMs, 1);
       const k = kind ? bump(`${kind}:${ip}`, now, windowMs, 1) : 0;
-      const miss = bump(`miss:${ip}`, now, windowMs, 0);
+      const miss = bump(`miss:${ip}`, now, windowMs, 1);
       return { all, kind: k, miss };
     },
-    miss(ip, now, windowMs) {
-      bump(`miss:${ip}`, now, windowMs, 1);
+    release(ip, now, windowMs) {
+      const h = hits.get(`miss:${ip}`);
+      if (h && h.start + windowMs > now) h.n = Math.max(0, h.n - 1);
     },
   };
 }
@@ -40,7 +44,7 @@ export async function checkRate(db, ip, kind, now, limits = RATE) {
   if (!ip || !db || !db.gate) return null;
   try {
     const g = await db.gate(ip, kind, now, limits.windowMs);
-    if (g.all > limits.all || (kind && g.kind > limits[kind]) || g.miss >= limits.misses) {
+    if (g.all > limits.all || (kind && g.kind > limits[kind]) || g.miss > limits.misses) {
       return { status: 429, body: { error: 'too many requests, slow down' } };
     }
   } catch {
@@ -49,11 +53,11 @@ export async function checkRate(db, ip, kind, now, limits = RATE) {
   return null;
 }
 
-// Counts a request that named a room or token that is not there.
-export async function noteMiss(db, ip, now, status, limits = RATE) {
-  if (!ip || !db || !db.miss || (status !== 404 && status !== 403)) return;
+// After the request ran: unless it named a room or token that is not there (404, 403), the reserved miss goes back.
+export async function settleRate(db, ip, now, status, limits = RATE) {
+  if (!ip || !db || !db.release || status === 404 || status === 403 || status === 429) return;
   try {
-    await db.miss(ip, now, limits.windowMs);
+    await db.release(ip, now, limits.windowMs);
   } catch {
     // see above
   }

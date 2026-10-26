@@ -14,13 +14,11 @@ const db = supabaseDb(
   }),
 );
 
-// The address the platform saw. Cloudflare sets cf-connecting-ip itself; x-forwarded-for can carry
-// client-supplied entries in front, so only its last entry is trusted.
+// The address Cloudflare saw. It is the only header trusted: Cloudflare sets it itself, while
+// x-forwarded-for and x-real-ip can carry client-supplied values. Without it (local runs) requests
+// are simply not rate-limited, rather than sharing one bucket.
 function clientIp(req: Request): string {
-  const cf = req.headers.get('cf-connecting-ip') || req.headers.get('x-real-ip');
-  if (cf) return cf.trim();
-  const xff = (req.headers.get('x-forwarded-for') || '').split(',').map((s) => s.trim()).filter(Boolean);
-  return xff.length ? xff[xff.length - 1] : 'unknown';
+  return (req.headers.get('cf-connecting-ip') || '').trim();
 }
 
 Deno.serve(async (req: Request) => {

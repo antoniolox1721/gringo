@@ -52,7 +52,7 @@ export function fakeDb() {
     rows,
     starts: [],
     gate: async (...a) => counters.gate(...a),
-    miss: async (...a) => counters.miss(...a),
+    release: async (...a) => counters.release(...a),
     async logStart(nowMs, players) {
       this.starts.push({ at: nowMs, players });
     },

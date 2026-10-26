@@ -197,6 +197,31 @@ test('real attempt: guessing room codes is cut off after a few tries, per addres
   assert.equal((await room(db, { action: 'join', code, name: 'later' }, { ip: attacker, now: () => t0 + RATE.windowMs + 6000 })).status, 200);
 });
 
+test('real attempt: a burst of simultaneous guesses cannot all slip past the limit', async () => {
+  const db = fakeDb();
+  const ip = '203.0.113.99';
+  const burst = await Promise.all(Array.from({ length: 400 }, (_, i) =>
+    room(db, { action: 'join', code: `Q${String.fromCharCode(65 + (i % 26))}${String.fromCharCode(65 + (Math.floor(i / 26) % 26))}Z`, name: 'x' }, { ip, now: () => 7_000_000 })));
+  const answered = burst.filter((r) => r.status === 404).length;
+  assert.ok(answered <= RATE.misses, `only ${RATE.misses} guesses may be answered at once, ${answered} were`);
+  assert.equal(burst.filter((r) => r.status === 429).length, 400 - answered);
+});
+
+test('requests that succeed give their reservation back, so normal play never nears the miss limit', async () => {
+  const db = fakeDb();
+  const { code, who } = await newRoom(db, 2, { ip: '10.9.9.9' });
+  const ip = '10.9.9.9';
+  const results = [];
+  for (let i = 0; i < 200; i++) results.push((await room(db, { action: 'view', code, token: who[i % 2].token }, { ip, now: () => 8_000_000 })).status);
+  assert.ok(results.every((s) => s === 200));
+  // A handful of honest mistakes on top of that are still fine.
+  for (let i = 0; i < 5; i++) assert.equal((await room(db, { action: 'join', code: 'ZZZZ', name: 'x' }, { ip, now: () => 8_000_000 })).status, 404);
+  assert.equal((await room(db, { action: 'view', code, token: who[0].token }, { ip, now: () => 8_000_000 })).status, 200);
+  // Simultaneous honest requests (four players polling at the same moment) are not mistaken for guessing.
+  const together = await Promise.all(Array.from({ length: 12 }, (_, i) => room(db, { action: 'view', code, token: who[i % 2].token }, { ip, now: () => 8_000_001 })));
+  assert.ok(together.every((r) => r.status === 200));
+});
+
 test('real attempt: wrong tokens count as guesses too', async () => {
   const db = fakeDb();
   const { code, who } = await newRoom(db, 2, { ip: '10.0.0.1' });

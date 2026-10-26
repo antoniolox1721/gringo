@@ -1,6 +1,6 @@
 // Storage helpers shared by the Edge Functions and the node tests.
 // `db` is any object with get(code), insert(row), update(code, expectedVersion, patch), touch(code, missing, caller)
-// purge(olderThanIso), purgeLonely(nowMs, lonelyMs, code?), gate(ip, kind, nowMs, windowMs), miss(ip, nowMs, windowMs),
+// purge(olderThanIso), purgeLonely(nowMs, lonelyMs, code?), gate(ip, kind, nowMs, windowMs), release(ip, nowMs, windowMs),
 // logStart(nowMs, players);
 // supabaseDb(client) adapts a supabase-js client to that interface.
 
@@ -106,8 +106,8 @@ export function supabaseDb(client) {
       if (error) throw new Error(error.message);
       return data;
     },
-    async miss(ip, nowMs, windowMs) {
-      const { error } = await client.rpc('rate_miss', { p_ip: ip, p_now_ms: nowMs, p_window_ms: windowMs });
+    async release(ip, nowMs, windowMs) {
+      const { error } = await client.rpc('rate_release', { p_ip: ip, p_now_ms: nowMs, p_window_ms: windowMs });
       if (error) throw new Error(error.message);
     },
     // Lasting record of a game starting: a time and a player count, nothing else.
