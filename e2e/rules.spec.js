@@ -74,3 +74,46 @@ test('custom rules are chosen at creation, shown to everyone, and change how the
   await host.context.close();
   await guest.context.close();
 });
+
+test('by default only your own cards can be slapped; the other-hands rule is off until the host asks for it', async ({ browser, baseURL, request }) => {
+  const errors = [];
+  const host = await open(browser, baseURL, errors, 'host');
+  const guest = await open(browser, baseURL, errors, 'guest');
+  const h = host.page;
+  // The form: other-hand slaps are off, and "Free slaps" cannot be chosen without them.
+  await h.click('details.custom summary');
+  await expect(h.locator('input[data-rule=slapOthers]')).not.toBeChecked();
+  await expect(h.locator('input[data-rule=slapGive]')).toBeDisabled();
+  await h.locator('input[data-rule=slapOthers]').check();
+  await expect(h.locator('input[data-rule=slapGive]')).toBeEnabled();
+  await h.locator('input[data-rule=slapOthers]').uncheck();
+  await expect(h.locator('input[data-rule=slapGive]')).toBeDisabled();
+
+  await h.fill('#name', 'Hanna');
+  await h.click('[data-act=create]');
+  await expect(h.locator('#roomcode')).toHaveText(/^[A-Z]{4}$/);
+  await expect(h.locator('.house')).toHaveCount(0); // a standard room lists no house rules
+  const code = (await h.locator('#roomcode').textContent()).trim();
+  const g = guest.page;
+  await g.fill('#name', 'Gus');
+  await g.fill('#code', code);
+  await g.click('[data-act=join]');
+  await expect(h.locator('.plist li')).toHaveCount(2);
+  await h.click('[data-act=start]');
+  const hs = await sess(h);
+  const gs = await sess(g);
+  expect((await request.post('/__test/stack', { data: { code, hands: { 0: ['5S', '6S', '7S', '8S'], 1: ['9H', '10H', '2C', '3C'] }, discard: ['4D'], deck: ['4C', '5D', '6D', '7D'] } })).ok()).toBeTruthy();
+  for (const [p, s] of [[h, hs], [g, gs]]) {
+    await slot(p, s.playerId, 0).click();
+    await slot(p, s.playerId, 1).click();
+    await p.click('[data-act=peek]');
+  }
+  await expect(g.locator('#hint')).toContainText("Hanna's turn", { timeout: 8000 });
+  await g.click('[data-act=slap]');
+  await expect(g.locator('#hint')).toContainText('one of your own cards');
+  await expect(slot(g, gs.playerId, 0)).toHaveClass(/tap/);
+  await expect(slot(g, hs.playerId, 0)).not.toHaveClass(/tap/);
+  expect(errors).toEqual([]);
+  await host.context.close();
+  await guest.context.close();
+});

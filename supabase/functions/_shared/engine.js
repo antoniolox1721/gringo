@@ -136,7 +136,7 @@ function checkSetupDone(s) {
 export const DEFAULT_RULES = {
   gringoBlocksSwaps: true, // a player who called Gringo cannot be swapped with (Jack, King)
   jackAnyPlayers: false, // the Jack swaps any two cards of two different players, not just yours
-  slapOthers: true, // a matching card may be slapped from another player's hand
+  slapOthers: false, // a matching card may also be slapped from another player's hand (house rule)
   slapGive: true, // ...and the slapper hands one of their own cards over in its place
   multiSlap: false, // the pile can be slapped again after a slap (no "claimed" lock)
   missPenalty: 1, // cards taken for a wrong slap

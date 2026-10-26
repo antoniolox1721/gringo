@@ -665,3 +665,5 @@ button.link.again { margin-top: 6px; }
 .hand.lined { display: grid; justify-content: center; align-content: start; gap: 6px 8px; }
 .pos-top .hand.lined, .pos-bottom .hand.lined { grid-template-columns: repeat(var(--n), max-content); }
 .pos-left .hand.lined, .pos-right .hand.lined { grid-auto-flow: column; grid-template-rows: repeat(var(--n), max-content); gap: 6px 8px; }
+
+.tray label.rule.off { opacity: .5; cursor: default; }

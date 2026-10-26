@@ -13,8 +13,8 @@ const uuid = () => `id-${++seq}-${Math.random().toString(16).slice(2)}`;
 const room = (db, body, deps = {}) => handleRoom(db, body, { ...quiet, uuid, ...deps });
 const act = (db, body, deps = {}) => handleAct(db, body, { ...quiet, ...deps });
 
-async function newRoom(db, players = 3, extra = {}) {
-  const made = await room(db, { action: 'create', name: 'p0' }, extra);
+async function newRoom(db, players = 3, extra = {}, rules = undefined) {
+  const made = await room(db, { action: 'create', name: 'p0', rules }, extra);
   assert.equal(made.status, 200);
   const code = made.body.code;
   const who = [{ id: made.body.playerId, token: made.body.token }];
@@ -92,7 +92,8 @@ test('real attempt: playing full games, no response ever carries a card the play
   let checked = 0;
   for (let game = 0; game < 14; game++) {
     const db = fakeDb();
-    const { code, who } = await newRoom(db, 3 + (game % 2));
+    // Half the games let hands be slapped across the table and Jacks swap anyone, so those paths are attacked too.
+    const { code, who } = await newRoom(db, 3 + (game % 2), {}, { slapOthers: game % 2 === 0, jackAnyPlayers: game % 3 === 0 });
     // A spectator is the best-placed spy: they only listen.
     const spy = await room(db, { action: 'join', code, name: 'spy' });
     // (the lobby had a seat, so with 3 players they sit; with 4 they watch)

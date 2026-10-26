@@ -1,4 +1,4 @@
-import { lonelyRoom } from '../supabase/functions/_shared/engine.js';
+import { cleanRules, lonelyRoom } from '../supabase/functions/_shared/engine.js';
 import { memoryCounters } from '../supabase/functions/_shared/ratelimit.js';
 
 // Deck convention: deck[0] is the top (next card drawn). Discard convention: last element is the top.
@@ -34,6 +34,9 @@ export function stackedGame({ players, hands, deck = [], discard, turn = 0 }) {
     endedBy: null,
     result: null,
     rps: null,
+    // Hand-built states allow slapping other hands, which is what most mechanics tests are about.
+    // The default (own cards only) is covered in rules.test.js.
+    rules: cleanRules({ slapOthers: true }),
   };
 }
 

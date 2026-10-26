@@ -632,16 +632,16 @@ function barHtml(brand = true, plaque = '') {
 const RULE_UI = [
   { key: 'gringoBlocksSwaps', invert: true, label: 'Swaps still work after Gringo', hint: 'Jack and King can swap cards with the player who called it.' },
   { key: 'jackAnyPlayers', label: 'Jack swaps any two players', hint: 'Blind swap between any two players, not only with you.' },
-  { key: 'slapOthers', invert: true, label: 'Slap only your own cards', hint: 'Slapping a card from another hand is not allowed.' },
-  { key: 'slapGive', invert: true, label: 'Free slaps', hint: 'Slapping another hand takes the card without giving one back.' },
+  { key: 'slapOthers', label: 'Slap other players\' cards', hint: 'Tap a matching face-down card in someone else\'s hand; you give them one of yours.' },
+  { key: 'slapGive', invert: true, needs: 'slapOthers', label: 'Free slaps', hint: 'Only with the rule above: you take their card without giving one back.' },
   { key: 'multiSlap', label: 'Slap again and again', hint: 'The pile can be slapped again right after a slap.' },
 ];
-const RULE_DEFAULTS = { gringoBlocksSwaps: true, jackAnyPlayers: false, slapOthers: true, slapGive: true, multiSlap: false, missPenalty: 1 };
+const RULE_DEFAULTS = { gringoBlocksSwaps: true, jackAnyPlayers: false, slapOthers: false, slapGive: true, multiSlap: false, missPenalty: 1 };
 let homeRules = { ...RULE_DEFAULTS };
 let homeRulesOpen = false;
 
 function customRulesHtml() {
-  const rows = RULE_UI.map((r) => `<label class="rule"><input type="checkbox" data-rule="${r.key}"${(r.invert ? !homeRules[r.key] : homeRules[r.key]) ? ' checked' : ''}>
+  const rows = RULE_UI.map((r) => `<label class="rule${r.needs && !homeRules[r.needs] ? ' off' : ''}"><input type="checkbox" data-rule="${r.key}"${(r.invert ? !homeRules[r.key] : homeRules[r.key]) ? ' checked' : ''}${r.needs && !homeRules[r.needs] ? ' disabled' : ''}>
     <span><b>${r.label}</b><small>${r.hint}</small></span></label>`).join('');
   const pen = [1, 2, 3].map((n) => `<option value="${n}"${homeRules.missPenalty === n ? ' selected' : ''}>${n} card${n > 1 ? 's' : ''}</option>`).join('');
   return `<details class="custom" data-key="custom"${homeRulesOpen ? ' open' : ''}><summary>Custom rules</summary>${rows}
@@ -653,8 +653,7 @@ function ruleNotes(rules) {
   const out = [];
   if (!rules.gringoBlocksSwaps) out.push('Swaps still work after Gringo');
   if (rules.jackAnyPlayers) out.push('Jack swaps any two players');
-  if (!rules.slapOthers) out.push('Only your own cards can be slapped');
-  else if (!rules.slapGive) out.push('Free slaps: no card given back');
+  if (rules.slapOthers) out.push(rules.slapGive ? 'Other players\' cards can be slapped' : 'Other players\' cards can be slapped, no card given back');
   if (rules.multiSlap) out.push('The pile can be slapped again after a slap');
   if (rules.missPenalty !== 1) out.push(`A wrong slap costs ${rules.missPenalty} cards`);
   return out;
@@ -682,7 +681,7 @@ function homeHtml() {
     <details class="rules"><summary>How to play</summary><ol>
       <li>Everyone gets 4 face-down cards and peeks at 2 of them, once.</li>
       <li>On your turn draw a card, then swap it into one of your spots or discard it.</li>
-      <li>Anyone may slap a card that matches the top of the pile. Wrong slaps cost a card.</li>
+      <li>Anyone may slap one of their own cards that matches the top of the pile to get rid of it. Wrong slaps cost a card.</li>
       <li>Discarding a Jack swaps two cards blind, a Queen lets you look at one, a King lets you look at one opponent card and one of yours, then swap those two or not.</li>
       <li>Call Gringo before drawing when you think you are lowest. Everyone else plays one more turn.</li>
       <li>Aces are 1, faces 10, red kings −3, jokers 0. Lowest total wins.</li>
@@ -1120,6 +1119,7 @@ document.addEventListener('change', (ev) => {
   if (!key) return;
   const rule = RULE_UI.find((r) => r.key === key);
   homeRules = { ...homeRules, [key]: rule ? ev.target.checked !== !!rule.invert : Number(ev.target.value) };
+  if (RULE_UI.some((r) => r.needs === key)) render(); // a dependent option switches on or off
 });
 document.addEventListener('toggle', (ev) => {
   if (ev.target.matches && ev.target.matches('details.custom')) homeRulesOpen = ev.target.open;

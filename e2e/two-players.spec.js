@@ -34,10 +34,14 @@ async function stack(request, code, body) {
 }
 
 // Creates a room, joins a guest, starts, stacks the cards, and has both peek slots 0 and 1.
-async function setupGame(browser, baseURL, request, errors, cards) {
+async function setupGame(browser, baseURL, request, errors, cards, opts = {}) {
   const host = await open(browser, baseURL, 'host', errors);
   const guest = await open(browser, baseURL, 'guest', errors);
   await host.page.fill('#name', 'Hanna');
+  if (opts.slapOthers) {
+    await host.page.click('details.custom summary');
+    await host.page.locator('input[data-rule=slapOthers]').check();
+  }
   await host.page.click('[data-act=create]');
   await expect(host.page.locator('#roomcode')).toHaveText(/^[A-Z]{4}$/);
   const code = (await host.page.locator('#roomcode').textContent()).trim();
@@ -169,7 +173,7 @@ test('successful slap on an opponent card gives a card into the vacated slot', a
     hands: { 0: ['9S', '6S', '7S', '8S'], 1: ['9H', '10H', '2C', '3C'] },
     discard: ['4D'],
     deck: ['9C', '5D', '6D', '7D'],
-  });
+  }, { slapOthers: true });
   await host.page.click('[data-act=draw]');
   await host.page.click('[data-act=discard]');
   await expect(guest.page.locator('#discard')).toContainText('9♣');

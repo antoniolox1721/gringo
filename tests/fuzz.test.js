@@ -48,7 +48,7 @@ function game(kind) {
   return g;
 }
 const RULE_SETS = [
-  {}, { jackAnyPlayers: true }, { gringoBlocksSwaps: false }, { slapOthers: false }, { slapGive: false }, { multiSlap: true },
+  {}, { jackAnyPlayers: true }, { gringoBlocksSwaps: false }, { slapOthers: false }, { slapOthers: true, slapGive: false }, { multiSlap: true },
   { missPenalty: 3 }, { jackAnyPlayers: true, gringoBlocksSwaps: false, slapGive: false, multiSlap: true, missPenalty: 2 },
 ];
 // Every state gets a spectator ('w') and random house rules, so both are fuzzed in every phase.

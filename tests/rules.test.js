@@ -31,7 +31,9 @@ test('cleanRules keeps defaults for anything missing or malformed', () => {
   assert.equal(custom.jackAnyPlayers, true);
   assert.equal(custom.missPenalty, 3);
   assert.equal(custom.gringoBlocksSwaps, false);
-  assert.equal(custom.slapOthers, true);
+  assert.equal(custom.slapOthers, false, 'slapping other hands is a house rule');
+  assert.equal(custom.slapGive, true);
+  assert.equal(engine.cleanRules({ slapOthers: true }).slapOthers, true);
 });
 
 test('rooms and their views carry the rules; old states fall back to the defaults', () => {
@@ -102,8 +104,8 @@ test('Gringo protects the caller by default and not when the rule is off', () =>
 
 const topSeven = (rules) => game(rules, { discard: [c('7', 'D')] });
 
-test('slapping another hand: default takes it and gives one back', () => {
-  const s = topSeven({});
+test('slapOthers on: another hand can be slapped, taking the card and giving one back', () => {
+  const s = topSeven({ slapOthers: true });
   s.players[1].hand[0] = c('7', 'C');
   const { state, ok } = engine.slap(s, 'a', { ownerId: 'b', slot: 0, giveSlot: 3 }, rng);
   assert.equal(ok, true);
@@ -112,8 +114,8 @@ test('slapping another hand: default takes it and gives one back', () => {
   assert.throws(() => engine.slap(s, 'a', { ownerId: 'b', slot: 0 }, rng), /giveSlot required/);
 });
 
-test('slapOthers off: only your own cards, and trying another hand is refused without a penalty', () => {
-  const s = topSeven({ slapOthers: false });
+test('by default only your own cards can be slapped, and trying another hand is refused without a penalty', () => {
+  const s = topSeven({});
   s.players[1].hand[0] = c('7', 'C');
   assert.throws(() => engine.slap(s, 'a', { ownerId: 'b', slot: 0, giveSlot: 0 }, rng), /only your own/);
   assert.throws(() => engine.slap(s, 'a', { ownerId: 'b', slot: 1 }, rng), /only your own/, 'a wrong guess is refused too, not punished');
@@ -123,7 +125,7 @@ test('slapOthers off: only your own cards, and trying another hand is refused wi
 });
 
 test('slapGive off: the card is taken and nothing is handed back', () => {
-  const s = topSeven({ slapGive: false });
+  const s = topSeven({ slapOthers: true, slapGive: false });
   s.players[1].hand[0] = c('7', 'C');
   const { state, ok } = engine.slap(s, 'a', { ownerId: 'b', slot: 0 }, rng);
   assert.equal(ok, true);
@@ -136,7 +138,7 @@ test('slapGive off: the card is taken and nothing is handed back', () => {
 });
 
 test('a slapped-out hand still ends the game with free slaps', () => {
-  const s = topSeven({ slapGive: false });
+  const s = topSeven({ slapOthers: true, slapGive: false });
   s.players[1].hand = [c('7', 'C'), null, null, null];
   const { state } = engine.slap(s, 'a', { ownerId: 'b', slot: 0 }, rng);
   assert.equal(state.phase, 'final');
@@ -191,6 +193,27 @@ test('rules arrive through the room endpoint, validated, and the view shows them
   assert.deepEqual(await make(undefined), engine.DEFAULT_RULES);
   assert.deepEqual(await make({ jackAnyPlayers: true, missPenalty: 2, evil: 1 }), { ...engine.DEFAULT_RULES, jackAnyPlayers: true, missPenalty: 2 });
   assert.deepEqual(await make({ missPenalty: 'lots', slapGive: [] }), engine.DEFAULT_RULES);
+});
+
+test('through the endpoints a new room refuses slaps on other hands, and a room that asked for them allows it', async () => {
+  const run = async (rules) => {
+    const s = engine.createGame('a', 'a', rules);
+    let st = engine.addPlayer(s, 'b', 'b');
+    st = engine.startGame(st, 'a', rng);
+    st.phase = 'turns';
+    st.players[1].hand[0] = c('7', 'C');
+    st.discard = [c('7', 'D')];
+    const db = fakeDb();
+    const tokens = { a: await hashToken('ta'), b: await hashToken('tb') };
+    db.rows.set('ABCD', { code: 'ABCD', state: st, tokens, version: st.version });
+    return handleAct(db, { code: 'ABCD', token: 'ta', action: 'slap', args: { ownerId: 'b', slot: 0, giveSlot: 0 } }, quiet);
+  };
+  const standard = await run(undefined);
+  assert.equal(standard.status, 400);
+  assert.match(standard.body.error, /only your own cards/);
+  const house = await run({ slapOthers: true });
+  assert.equal(house.status, 200);
+  assert.equal(house.body.ok, true);
 });
 
 test('the Jack through the act endpoint honours firstId and the rule', async () => {
