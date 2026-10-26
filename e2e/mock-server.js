@@ -73,6 +73,11 @@ function wrap(fn) {
   }
 }
 
+function dropTokens(room, before) {
+  const gone = new Set(engine.vanishedSpectators(before, room.state));
+  for (const [tok, pid] of room.tokens) if (gone.has(pid)) room.tokens.delete(tok);
+}
+
 function roomEndpoint(body) {
   switch (body.action) {
     case 'create': {
@@ -124,7 +129,11 @@ function roomEndpoint(body) {
       }
       if (engine.endingOver(room.state, t, LIMITS)) room.state = engine.stamp(room.state, engine.settle(room.state, t, LIMITS), t);
       const absent = engine.absentPlayers(room.state, room.seen, id, t, LIMITS);
-      if (body.bye !== true && absent.length) room.state = wrap(() => engine.stamp(room.state, engine.dropAbsent(room.state, absent), t));
+      if (body.bye !== true && absent.length) {
+        const before = room.state;
+        room.state = wrap(() => engine.stamp(before, engine.dropAbsent(before, absent), t));
+        dropTokens(room, before);
+      }
       return { view: engine.viewFor(room.state, id) };
     }
     case 'sit': {
@@ -136,7 +145,9 @@ function roomEndpoint(body) {
     case 'leave': {
       const room = roomOf(body.code);
       const id = auth(room, body.token);
-      room.state = wrap(() => engine.stamp(room.state, engine.dropAbsent(room.state, [id]), Date.now()));
+      const before = room.state;
+      room.state = wrap(() => engine.stamp(before, engine.dropAbsent(before, [id]), Date.now()));
+      dropTokens(room, before);
       return { ok: true };
     }
     default:

@@ -32,6 +32,15 @@ async function guarded(work) {
   }
 }
 
+// A spectator who is gone for good gives up their token, so a room's token list stays bounded.
+function withoutGoneTokens(prev, next, tokens) {
+  const gone = engine.vanishedSpectators(prev, next);
+  if (gone.length === 0) return next;
+  const rest = { ...tokens };
+  for (const id of gone) delete rest[id];
+  return { state: next, tokens: rest };
+}
+
 async function runEngine(fn) {
   try {
     return await fn();
@@ -111,8 +120,8 @@ export async function handleRoom(db, body, deps = {}) {
       if (bye || engine.absentPlayers(state, next, id, t, limits).length === 0) {
         return ok({ view: engine.viewFor(state, id) });
       }
-      const res = await applyWithRetry(db, code, (st) =>
-        runEngine(() => engine.stamp(st, engine.dropAbsent(st, engine.absentPlayers(st, next, id, t, limits)), t)),
+      const res = await applyWithRetry(db, code, (st, tk) =>
+        runEngine(() => withoutGoneTokens(st, engine.stamp(st, engine.dropAbsent(st, engine.absentPlayers(st, next, id, t, limits)), t), tk)),
       );
       await notify(code, res.version);
       return ok({ view: engine.viewFor(res.state, id) });
@@ -121,7 +130,7 @@ export async function handleRoom(db, body, deps = {}) {
     if (action === 'leave') {
       const res = await applyWithRetry(db, code, async (state, tokens) => {
         const id = await playerIdForToken(tokens, body.token);
-        return runEngine(() => engine.stamp(state, engine.dropAbsent(state, [id]), now()));
+        return runEngine(() => withoutGoneTokens(state, engine.stamp(state, engine.dropAbsent(state, [id]), now()), tokens));
       });
       await notify(code, res.version);
       return ok({ ok: true });

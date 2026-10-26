@@ -54,6 +54,8 @@ export function handTotal(hand) {
 
 const MAX_PLAYERS = 4;
 const MAX_SPECTATORS = 8;
+// Everyone who ever joined a room as a spectator counts, so join/leave cycles cannot grow it forever.
+const MAX_SPECTATOR_JOINS = 64;
 const HAND_SIZE = 4;
 
 function clone(state) {
@@ -193,13 +195,20 @@ export function addPlayer(state, id, name) {
 }
 
 const spectatorsOf = (s) => s.spectators || [];
+
+// Ids of spectators that `prev` had and `next` has nowhere (left, timed out, kicked): their tokens can go.
+export function vanishedSpectators(prev, next) {
+  const here = new Set([...next.players.map((p) => p.id), ...spectatorsOf(next).map((x) => x.id)]);
+  return spectatorsOf(prev).map((x) => x.id).filter((id) => !here.has(id));
+}
 const isSpectator = (s, id) => spectatorsOf(s).some((x) => x.id === id);
 
 export function addSpectator(state, id, name) {
   if (state.players.some((p) => p.id === id) || isSpectator(state, id)) throw new Error('already joined');
-  if (spectatorsOf(state).length >= MAX_SPECTATORS) throw new Error('too many spectators');
+  if (spectatorsOf(state).length >= MAX_SPECTATORS || (state.spectatorJoins || 0) >= MAX_SPECTATOR_JOINS) throw new Error('too many spectators');
   return produce(state, (s) => {
     s.spectators = [...spectatorsOf(s), { id, name, wantsIn: false }];
+    s.spectatorJoins = (s.spectatorJoins || 0) + 1;
   });
 }
 

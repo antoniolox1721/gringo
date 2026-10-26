@@ -367,6 +367,34 @@ test('a spectator closing the tab (bye) or leaving removes them quietly', async 
   const s = db.rows.get('ABCD').state;
   assert.equal(s.phase, 'turns');
   assert.deepEqual(s.spectators, []);
+  assert.deepEqual(Object.keys(db.rows.get('ABCD').tokens).sort(), ['p0', 'p1', 'p2'], 'the token goes with them');
+  assert.equal((await view(db, 'tw')).status, 403);
+});
+
+test('join and leave cycles cannot grow a room forever', async () => {
+  const db = await room(playing(), ['p0', 'p1', 'p2']);
+  let accepted = 0;
+  for (let i = 0; i < 80; i++) {
+    const j = await join(db, `w${i}`);
+    if (j.status !== 200) {
+      assert.match(j.body.error, /too many spectators/);
+      break;
+    }
+    accepted += 1;
+    await handleRoom(db, { action: 'leave', code: 'ABCD', token: j.body.token }, quiet);
+  }
+  assert.equal(accepted, 64);
+  const row = db.rows.get('ABCD');
+  assert.deepEqual(Object.keys(row.tokens).sort(), ['p0', 'p1', 'p2'], 'no token is left behind');
+  assert.deepEqual(row.state.spectators, []);
+  assert.deepEqual(engine.vanishedSpectators(playing(), engine.joinRoom(playing(), 'x', 'x')), []);
+});
+
+test('a spectator who sits in is not treated as gone', () => {
+  const before = engine.joinRoom(lobby(4), 'w', 'w');
+  const seated = engine.sit(engine.removePlayer(before, 'p3'), 'w');
+  assert.deepEqual(seated.players.map((p) => p.id), ['p0', 'p1', 'p2', 'w']);
+  assert.deepEqual(engine.vanishedSpectators(before, seated), []);
 });
 
 test('the room is not purged while a game is played in front of a crowd', async () => {
